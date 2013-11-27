@@ -3,6 +3,10 @@
 
 class FPSCamera {
 public:
+	FPSCamera() {
+		_up = vec3(0, 1, 0);
+	}
+
 	void set_pos(vec3 pos) {
 		_pos = pos;
 	}
@@ -28,20 +32,19 @@ public:
 	}
 
 	void strafe(float amount) {
-		vec3 side = glm::normalize(glm::cross(_dir, vec3(0, 1, 0)));
+		vec3 side = glm::normalize(glm::cross(_dir, _up));
 		_pos += side * amount;
 	}
 
 	void rise(float amount) {
-		vec3 side = glm::normalize(glm::cross(_dir, vec3(0, 1, 0)));
+		vec3 side = glm::normalize(glm::cross(_dir, _up));
 		vec3 up = glm::normalize(glm::cross(side, _dir));
 		_pos += up * amount;
 	}
 
 	void rotate(float yaw, float pitch) {
-		vec3 up = vec3(0, 1, 0);
-		vec3 side = glm::normalize(glm::cross(_dir, up));
-		_dir = glm::angleAxis(yaw, up) * _dir;
+		vec3 side = glm::normalize(glm::cross(_dir, _up));
+		_dir = glm::angleAxis(yaw, _up) * _dir;
 		_dir = glm::angleAxis(pitch, side) * _dir;
 	}
 
@@ -49,11 +52,12 @@ public:
 		return glm::lookAt(
 			_pos,
 			_pos + _dir,
-			vec3(0, 1, 0)
+			_up
 			);
 	}
 
 private:
+	vec3 _up;
 	vec3 _pos;
 	vec3 _dir;
 };

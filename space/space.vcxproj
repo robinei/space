@@ -41,13 +41,13 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>$(SolutionDir)deps\include;c:\code\boost_1_55_0;$(IncludePath)</IncludePath>
-    <LibraryPath>$(SolutionDir)deps\lib;c:\code\boost_1_55_0\stage\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(SolutionDir)deps\include;c:\code\boost;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)deps\lib;c:\code\boost\stage\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
-    <IncludePath>$(SolutionDir)deps\include;c:\code\boost_1_55_0;$(IncludePath)</IncludePath>
-    <LibraryPath>$(SolutionDir)deps\lib;c:\code\boost_1_55_0\stage\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(SolutionDir)deps\include;c:\code\boost;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)deps\lib;c:\code\boost\stage\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -86,14 +86,23 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="mesh.cpp" />
     <ClCompile Include="program.cpp" />
+    <ClCompile Include="quadtree.cpp" />
     <ClCompile Include="stb_image.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="arena.h" />
     <ClInclude Include="bufferobject.h" />
     <ClInclude Include="fpscamera.h" />
+    <ClInclude Include="hashtable.h" />
+    <ClInclude Include="list.h" />
+    <ClInclude Include="listlink.h" />
     <ClInclude Include="mesh.h" />
+    <ClInclude Include="mymath.h" />
     <ClInclude Include="opengl.h" />
     <ClInclude Include="program.h" />
+    <ClInclude Include="quadtree.h" />
+    <ClInclude Include="refcounted.h" />
+    <ClInclude Include="weakref.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

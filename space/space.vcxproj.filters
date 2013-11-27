@@ -1,51 +1,75 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Source Files">
-      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
-      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    <Filter Include="common">
+      <UniqueIdentifier>{6060a0ca-c757-409f-b9ca-3827040dcbd9}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files">
-      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
-      <Extensions>h;hh;hpp;hxx;hm;inl;inc;xsd</Extensions>
+    <Filter Include="game">
+      <UniqueIdentifier>{e23baf78-aa1c-44c9-9df1-e9f5bc47ccef}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Resource Files">
-      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    <Filter Include="render">
+      <UniqueIdentifier>{50ddebc0-ba2e-4581-aaea-afa6229e94f3}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="main.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="mesh.cpp">
+      <Filter>render</Filter>
     </ClCompile>
     <ClCompile Include="program.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="stb_image.c">
-      <Filter>Source Files</Filter>
+      <Filter>render</Filter>
     </ClCompile>
     <ClCompile Include="bufferobject.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>render</Filter>
     </ClCompile>
-    <ClCompile Include="mesh.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="stb_image.c">
+      <Filter>common</Filter>
+    </ClCompile>
+    <ClCompile Include="main.cpp">
+      <Filter>game</Filter>
+    </ClCompile>
+    <ClCompile Include="quadtree.cpp">
+      <Filter>common</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="opengl.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="program.h">
-      <Filter>Header Files</Filter>
+      <Filter>render</Filter>
     </ClInclude>
-    <ClInclude Include="bufferobject.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="fpscamera.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="opengl.h">
+      <Filter>render</Filter>
     </ClInclude>
     <ClInclude Include="mesh.h">
-      <Filter>Header Files</Filter>
+      <Filter>render</Filter>
+    </ClInclude>
+    <ClInclude Include="bufferobject.h">
+      <Filter>render</Filter>
+    </ClInclude>
+    <ClInclude Include="fpscamera.h">
+      <Filter>game</Filter>
+    </ClInclude>
+    <ClInclude Include="listlink.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="hashtable.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="list.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="refcounted.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="weakref.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="arena.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="quadtree.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="mymath.h">
+      <Filter>common</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

@@ -75,7 +75,6 @@ void Shader::compile() {
 		std::string log;
 		log.resize(length);
 		glGetShaderInfoLog(_shader, length, &result, &log[0]);
-		glDeleteShader(_shader);
 
 		throw ShaderException(log.c_str());
 	}
@@ -181,6 +180,12 @@ void Program::uniform(GLint location, GLint value) {
 	glUniform1i(location, value);
 }
 
+void Program::uniform(GLint location, const vec2 &value) {
+	assert(bound_program == this);
+	assert(location >= 0);
+	glUniform2fv(location, 1, glm::value_ptr(value));
+}
+
 void Program::uniform(GLint location, const vec3 &value) {
 	assert(bound_program == this);
 	assert(location >= 0);
@@ -191,6 +196,12 @@ void Program::uniform(GLint location, const vec4 &value) {
 	assert(bound_program == this);
 	assert(location >= 0);
 	glUniform4fv(location, 1, glm::value_ptr(value));
+}
+
+void Program::uniform(GLint location, const mat2 &value) {
+	assert(bound_program == this);
+	assert(location >= 0);
+	glUniformMatrix2fv(location, 1, GL_FALSE, glm::value_ptr(value));
 }
 
 void Program::uniform(GLint location, const mat3 &value) {

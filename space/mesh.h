@@ -2,7 +2,7 @@
 #define MESH_H
 
 #include <vector>
-
+#include "refcounted.h"
 
 class VertexFormat : public RefCounted {
 public:

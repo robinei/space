@@ -2,7 +2,7 @@
 #define SHADER_H
 
 // requires: opengl.h
-
+#include "refcounted.h"
 
 class Shader : public RefCounted {
 public:
@@ -55,8 +55,10 @@ public:
 	GLint uniform_location(const char *name);
 	void uniform(GLint location, GLfloat value);
 	void uniform(GLint location, GLint value);
+	void uniform(GLint location, const vec2 &value);
 	void uniform(GLint location, const vec3 &value);
 	void uniform(GLint location, const vec4 &value);
+	void uniform(GLint location, const mat2 &value);
 	void uniform(GLint location, const mat3 &value);
 	void uniform(GLint location, const mat4 &value);
 

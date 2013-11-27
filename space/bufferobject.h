@@ -2,6 +2,7 @@
 #define BUFFEROBJECT_H
 
 // requires: opengl.h
+#include "refcounted.h"
 
 class BufferObject : public RefCounted {
 public:
