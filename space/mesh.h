@@ -3,6 +3,7 @@
 
 #include <vector>
 #include "refcounted.h"
+#include "bufferobject.h"
 
 class VertexFormat : public RefCounted {
 public:

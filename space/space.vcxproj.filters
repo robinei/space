@@ -30,6 +30,9 @@
     <ClCompile Include="quadtree.cpp">
       <Filter>common</Filter>
     </ClCompile>
+    <ClCompile Include="renderer.cpp">
+      <Filter>render</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="program.h">
@@ -70,6 +73,9 @@
     </ClInclude>
     <ClInclude Include="mymath.h">
       <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="renderer.h">
+      <Filter>render</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

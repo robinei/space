@@ -19,6 +19,7 @@
 #include "fpscamera.h"
 #include "list.h"
 #include "quadtree.h"
+#include "renderer.h"
 
 #define STBI_HEADER_FILE_ONLY
 #include "stb_image.c"
@@ -39,6 +40,7 @@ do { \
 
 
 
+static Renderer renderer;
 static Program::Ref ship_program;
 static Program::Ref qtree_program;
 static Mesh::Ref mesh;
@@ -69,7 +71,7 @@ public:
     }
 
     virtual void update(World &world) {}
-    virtual void render() {}
+    virtual void render(Renderer *renderer) {}
 
 private:
     Body(const Body &);
@@ -104,18 +106,9 @@ public:
             body->update(*this);
     }
 
-    void render() {
-        glClearColor(0, 0, 0, 1);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-
-        glEnable(GL_DEPTH_TEST);
-        glDepthFunc(GL_LESS);
-
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
-
+    void render(Renderer *renderer) {
         for (Body *body : bodies)
-            body->render();
+            body->render(renderer);
     }
 
 private:
@@ -155,6 +148,7 @@ public:
         vel += acc;
 
         pos += vel * world.dt;
+        pos.z = 0;
         qtree_update();
     }
 
@@ -238,27 +232,24 @@ public:
         return steer;
     }
 
-    void render() {
+    void render(Renderer *renderer) {
         mat4 model = glm::translate(pos);
         mat4 vm = view_matrix * model;
         mat4 pvm = projection_matrix * vm;
         mat3 normal = glm::inverseTranspose(mat3(vm));
 
-        ship_program->bind();
-        ship_program->uniform("m_pvm", pvm);
-        ship_program->uniform("m_vm", vm);
-        ship_program->uniform("m_normal", normal);
-        ship_program->uniform("light_dir", light_dir);
-        ship_program->uniform("mat_ambient", vec4(0.329412f, 0.223529f, 0.027451f, 1.0f));
-        ship_program->uniform("mat_diffuse", vec4(0.780392f, 0.568627f, 0.113725f, 1.0f));
-        ship_program->uniform("mat_specular", vec4(0.992157f, 0.941176f, 0.807843f, 1.0f));
-        ship_program->uniform("mat_shininess", 27.89743616f);
-
-        mesh->bind();
-        mesh->render();
-        mesh->unbind();
-
-        ship_program->unbind();
+        auto cmd = RenderCommand::create();
+        cmd->program = ship_program;
+        cmd->mesh = mesh;
+        cmd->set_uniform("m_pvm", pvm);
+        cmd->set_uniform("m_vm", vm);
+        cmd->set_uniform("m_normal", normal);
+        cmd->set_uniform("light_dir", light_dir);
+        cmd->set_uniform("mat_ambient", vec4(0.329412f, 0.223529f, 0.027451f, 1.0f));
+        cmd->set_uniform("mat_diffuse", vec4(0.780392f, 0.568627f, 0.113725f, 1.0f));
+        cmd->set_uniform("mat_specular", vec4(0.992157f, 0.941176f, 0.807843f, 1.0f));
+        cmd->set_uniform("mat_shininess", 27.89743616f);
+        renderer->add_command(cmd);
     }
 };
 
@@ -397,38 +388,6 @@ static void LoadTriangle() {
     qtree_program->detach_all();
 }
 
-static void Render() {
-    glClearColor(0, 0, 0, 1);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
-
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
-
-    mat4 model = mat4();
-    mat4 vm = view_matrix * model;
-    mat4 pvm = projection_matrix * vm;
-    mat3 normal = glm::inverseTranspose(mat3(vm));
-
-    ship_program->bind();
-    ship_program->uniform("m_pvm", pvm);
-    ship_program->uniform("m_vm", vm);
-    ship_program->uniform("m_normal", normal);
-    ship_program->uniform("light_dir", light_dir);
-    ship_program->uniform("mat_ambient", vec4(0.329412f, 0.223529f, 0.027451f, 1.0f));
-    ship_program->uniform("mat_diffuse", vec4(0.780392f, 0.568627f, 0.113725f, 1.0f));
-    ship_program->uniform("mat_specular", vec4(0.992157f, 0.941176f, 0.807843f, 1.0f));
-    ship_program->uniform("mat_shininess", 27.89743616f);
-
-    mesh->bind();
-    mesh->render();
-    mesh->unbind();
-
-    ship_program->unbind();
-}
-
 
 
 
@@ -463,7 +422,7 @@ int main(int argc, char *argv[]) {
     SDL_DisplayMode mode;
     if (SDL_GetDesktopDisplayMode(0, &mode) < 0)
         die("SDL_GetDesktopDisplayMode() error: %s", SDL_GetError());
-    mode.w = 1920, mode.h = 1080;
+    //mode.w = 1920, mode.h = 1080;
 
     SDL_Window *window = SDL_CreateWindow(
         "Test",
@@ -474,8 +433,8 @@ int main(int argc, char *argv[]) {
     if (!window)
         die("SDL_CreateWindow() error: %s", SDL_GetError());
 
-    //if (SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP) < 0)
-    //	die("SDL_SetWindowFullscreen() error: %s", SDL_GetError());
+    if (SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP) < 0)
+    	die("SDL_SetWindowFullscreen() error: %s", SDL_GetError());
 
     SDL_GLContext glcontext = SDL_GL_CreateContext(window);
     if (!glcontext)
@@ -553,13 +512,17 @@ int main(int argc, char *argv[]) {
         int mx = 0, my = 0;
         SDL_GetMouseState(&mx, &my);
 
+#define ORTHO 1
+#if ORTHO
         projection_matrix = glm::ortho(-viewport_radius*aspect_ratio,
                                        viewport_radius*aspect_ratio,
                                        -viewport_radius,
                                        viewport_radius,
-                                       -100.0f,
-                                       100.0f);
-        //projection_matrix = glm::perspective(45.0f, ratio, 0.1f, 100.0f);
+                                       -1000.0f,
+                                       1000.0f);
+#else
+        projection_matrix = glm::perspective(45.0f, aspect_ratio, 0.1f, 1000.0f);
+#endif
 
         view_matrix = glm::lookAt(camera_pos,
                                   camera_pos + vec3(0.0f, 1.0f, -2.0f),
@@ -569,32 +532,54 @@ int main(int argc, char *argv[]) {
         light_dir = glm::normalize(glm::angleAxis(dt*100.0f, vec3(0, 1, 0)) * light_dir);
         light_dir = glm::normalize(glm::angleAxis(dt*10.0f, vec3(1, 0, 0)) * light_dir);
 
-        cursor_pos = glm::unProject(vec3((float)mx, (float)mode.h - (float)my, 0.0f),
-                                    view_matrix,
-                                    projection_matrix,
-                                    vec4(0.0f, 0.0f, (float)mode.w, (float)mode.h));
-        cursor_pos.z = 0.0f;
+        {
+            vec3 P0 = glm::unProject(vec3(mx, mode.h - my - 1, 0), view_matrix, projection_matrix, vec4(0, 0, mode.w, mode.h));
+            vec3 P1 = glm::unProject(vec3(mx, mode.h - my - 1, 1), view_matrix, projection_matrix, vec4(0, 0, mode.w, mode.h));
+            vec3 V = glm::normalize(P1 - P0);
+            vec3 N(0, 0, 1);
+            float d = 0;
+            float t = -(glm::dot(P0, N) + d) / glm::dot(V, N);
+            cursor_pos = P0 + V * t;
+        }
 
         world.update();
-        world.bodies.front();
         world.bodies.front()->pos = cursor_pos;
-        world.render();
+        
+        // render stuff
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
 
-        qtree_program->bind();
-        qtree_program->uniform("m_pvm", projection_matrix * view_matrix);
-        qtree_program->uniform("color", vec4(0.2f, 0.2f, 0.2f, 1));
-        qtreelines.clear();
-        world.quadtree.gather_outlines(qtreelines);
-        qtreebuf->bind(GL_ARRAY_BUFFER);
-        qtreebuf->write(0, sizeof(qtreelines[0])*qtreelines.size(), &qtreelines[0]);
-        qtreebuf->unbind();
-        qtreemesh->set_num_vertexes(qtreelines.size());
-        qtreemesh->bind();
-        qtreemesh->render();
-        qtreemesh->unbind();
-        qtree_program->unbind();
+        {
+            qtreelines.clear();
+            world.quadtree.gather_outlines(qtreelines);
+            qtreebuf->bind(GL_ARRAY_BUFFER);
+            qtreebuf->write(0, sizeof(qtreelines[0])*qtreelines.size(), &qtreelines[0]);
+            qtreebuf->unbind();
+            qtreemesh->set_num_vertexes(qtreelines.size());
 
-        //Render();
+            auto cmd = RenderCommand::create();
+            cmd->program = qtree_program;
+            cmd->mesh = qtreemesh;
+            cmd->set_uniform("m_pvm", projection_matrix * view_matrix);
+            cmd->set_uniform("color", vec4(0.2f, 0.2f, 0.2f, 1));
+            renderer.add_command(cmd);
+            
+            glDepthMask(GL_FALSE);
+            renderer.perform_commands();
+            renderer.clear_commands();
+        }
+
+        world.render(&renderer);
+        
+        glDepthMask(GL_TRUE);
+        renderer.sort_commands();
+        renderer.perform_commands();
+        renderer.clear_commands();
+        
         SDL_GL_SwapWindow(window);
 
         float speed = 50.0;
@@ -638,11 +623,19 @@ int main(int argc, char *argv[]) {
                 //camera.rotate((float)event.motion.xrel * -sensitivity, (float)event.motion.yrel * -sensitivity);
                 break;
             case SDL_MOUSEWHEEL:
+#if ORTHO
                 viewport_radius += -0.2f * event.wheel.y * viewport_radius;
                 if (viewport_radius > 200.0f)
                     viewport_radius = 200.0f;
                 if (viewport_radius < 20.0f)
                     viewport_radius = 20.0f;
+#else    
+                camera_pos.z += -0.4f * event.wheel.y * camera_pos.z;
+                if (camera_pos.z < 1.0f)
+                    camera_pos.z = 1.0f;
+                if (camera_pos.z > 500.0f)
+                    camera_pos.z = 500.0f;
+#endif
                 break;
             case SDL_QUIT:
                 running = false;

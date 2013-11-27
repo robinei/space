@@ -41,7 +41,8 @@ private:
     QuadTree(const QuadTree &);
     QuadTree &operator=(const QuadTree &);
 
-    bool insert(class Node *n, Object *obj);
+    void insert(class Node *n, Object *obj);
+    void maybe_merge_with_siblings(class Node *n);
 
     class Node *new_node(class Node *parent, Rect rect);
     void free_node(class Node *n);

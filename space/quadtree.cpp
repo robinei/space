@@ -7,8 +7,6 @@ enum {
     MERGE_THRESHOLD = 1
 };
 
-#define FIT_FUZZ 0.0001f
-
 
 
 class Node {
@@ -16,6 +14,7 @@ public:
     typedef List<QuadTree::Object, &QuadTree::Object::qtree_link> ObjectList;
 
     Rect rect;
+    vec2 center;
     QuadTree *qtree;
     Node *parent;
     int depth;
@@ -32,11 +31,26 @@ public:
         --num_objects;
     }
 
+    int calc_index(vec2 pos) {
+        if (pos.y < center.y)
+            return pos.x < center.x ? 0 : 1;
+        return pos.x < center.x ? 2 : 3;
+    }
+
+    Node *calc_child(vec2 pos) {
+        return child[calc_index(pos)];
+    }
+
     void query(Rect rect, std::vector<QuadTree::Object *> &result) {
         if (child[0]) {
-            for (int i = 0; i < 4; ++i)
-            if (child[i]->rect.intersects(rect))
-                child[i]->query(rect, result);
+            if (rect.min.y < child[0]->rect.max.y) {
+                if (rect.min.x < child[0]->rect.max.x) child[0]->query(rect, result);
+                if (rect.max.x > child[1]->rect.min.x) child[1]->query(rect, result);
+            }
+            if (rect.max.y > child[2]->rect.min.y) {
+                if (rect.min.x < child[2]->rect.max.x) child[2]->query(rect, result);
+                if (rect.max.x > child[3]->rect.min.x) child[3]->query(rect, result);
+            }
         } else {
             for (QuadTree::Object *obj : objects) {
                 if (rect.contains(obj->qtree_position()))
@@ -47,9 +61,14 @@ public:
 
     void query(Rect rect, vec2 pos, float radius, std::vector<QuadTree::Object *> &result) {
         if (child[0]) {
-            for (int i = 0; i < 4; ++i)
-            if (child[i]->rect.intersects(rect))
-                child[i]->query(rect, pos, radius, result);
+            if (rect.min.y < child[0]->rect.max.y) {
+                if (rect.min.x < child[0]->rect.max.x) child[0]->query(rect, pos, radius, result);
+                if (rect.max.x > child[1]->rect.min.x) child[1]->query(rect, pos, radius, result);
+            }
+            if (rect.max.y > child[2]->rect.min.y) {
+                if (rect.min.x < child[2]->rect.max.x) child[2]->query(rect, pos, radius, result);
+                if (rect.max.x > child[3]->rect.min.x) child[3]->query(rect, pos, radius, result);
+            }
         } else {
             for (QuadTree::Object *obj : objects) {
                 vec2 d = obj->qtree_position() - pos;
@@ -82,15 +101,16 @@ public:
 
 
 void QuadTree::Object::qtree_remove() {
-    if (qtree_node) qtree_node->qtree->remove(this);
+    if (qtree_node)
+        qtree_node->qtree->remove(this);
 }
 
 void QuadTree::Object::qtree_update() {
-    if (!qtree_node) return;
-    if (qtree_node->rect.contains(qtree_position(), FIT_FUZZ)) return;
-    QuadTree *qtree = qtree_node->qtree;
-    qtree->remove(this);
-    qtree->insert(this);
+    if (qtree_node && !qtree_node->rect.contains(qtree_position())) {
+        QuadTree *qtree = qtree_node->qtree;
+        qtree->remove(this);
+        qtree->insert(this);
+    }
 }
 
 
@@ -103,12 +123,9 @@ void QuadTree::insert(Object *obj) {
     insert(root, obj);
 }
 
-bool QuadTree::insert(Node *n, Object *obj) {
+void QuadTree::insert(Node *n, Object *obj) {
     assert(!obj->qtree_node);
     assert(!obj->qtree_link.is_linked());
-
-    if (!n->rect.contains(obj->qtree_position(), FIT_FUZZ))
-        return false;
 
     if (!n->child[0]) {
         // we are a leaf node; check if there is space
@@ -116,7 +133,7 @@ bool QuadTree::insert(Node *n, Object *obj) {
             obj->qtree_node = n;
             n->objects.push_back(obj);
             ++n->num_objects;
-            return true;
+            return;
         }
 
         // this node is full; split into four children
@@ -131,26 +148,15 @@ bool QuadTree::insert(Node *n, Object *obj) {
 
         // spread objects among children
         while (n->num_objects) {
-            Object *obj = n->objects.front();
-            n->remove(obj);
-            if (insert(n->child[0], obj)) continue;
-            if (insert(n->child[1], obj)) continue;
-            if (insert(n->child[2], obj)) continue;
-            if (insert(n->child[3], obj)) continue;
-
-            // all parents' objects should fit in the children
-            assert(0);
+            Object *obj2 = n->objects.front();
+            n->remove(obj2);
+            insert(n->calc_child(obj2->qtree_position()), obj2);
         }
         assert(n->objects.empty());
     }
 
     // this is an internal node, so we recurse
-    if (insert(n->child[0], obj)) return true;
-    if (insert(n->child[1], obj)) return true;
-    if (insert(n->child[2], obj)) return true;
-    if (insert(n->child[3], obj)) return true;
-
-    return false; // shouldn't happen!
+    insert(n->calc_child(obj->qtree_position()), obj);
 }
 
 void QuadTree::remove(Object *obj) {
@@ -161,12 +167,14 @@ void QuadTree::remove(Object *obj) {
     assert(!n->child[0]);
 
     n->remove(obj);
-
+    
     // only when a removal leaves the count below or at MERGE_THRESHOLD do we
     // investigate merging the node with its siblings
-    if (n->num_objects > MERGE_THRESHOLD)
-        return;
+    if (n->num_objects <= MERGE_THRESHOLD)
+        maybe_merge_with_siblings(n);
+}
 
+void QuadTree::maybe_merge_with_siblings(Node *n) {
     Node *parent = n->parent;
     if (!parent)
         return; // can't merge any more since we're at the root node
@@ -184,7 +192,8 @@ void QuadTree::remove(Object *obj) {
         count += c->num_objects;
     }
 
-    // if the count is greater than the threshold, the node should remain split
+    // if the count is greater than the split threshold,
+    // the node should remain split
     if (count > SPLIT_THRESHOLD)
         return;
 
@@ -205,6 +214,9 @@ void QuadTree::remove(Object *obj) {
         }
         free_node(c);
     }
+
+    // recurse here, since there may be opportunity for even more merging
+    maybe_merge_with_siblings(parent);
 }
 
 void QuadTree::query(Rect rect, std::vector<Object *> &result) {
@@ -229,6 +241,7 @@ Node *QuadTree::new_node(Node *parent, Rect rect) {
     else
         n = arena.alloc<Node>();
     n->rect = rect;
+    n->center = rect.center();
     n->qtree = this;
     n->parent = parent;
     n->depth = parent ? parent->depth + 1 : 0;

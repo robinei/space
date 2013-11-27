@@ -19,6 +19,11 @@ public:
     Rect(float x0, float y0, float x1, float y1) : min(x0, y0), max(x1, y1) {}
     Rect(vec2 min, vec2 max) : min(min), max(max) {}
 
+    float width() { return max.x - min.x; }
+    float height() { return max.y - min.y; }
+    vec2 dimensions() { return vec2(width(), height()); }
+    vec2 center() { return min + dimensions() * 0.5f; }
+
     bool contains(vec2 p) {
         return !(p.x < min.x ||
                  p.y < min.y ||
