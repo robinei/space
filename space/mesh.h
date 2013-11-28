@@ -107,6 +107,8 @@ private:
 	int _num_buffers;
 	BufferObject::Ref *_buffers;
 	VertexFormat::Ref *_formats;
+
+    bool _dirty;
 };
 
 #endif

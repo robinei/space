@@ -365,20 +365,20 @@ static Mesh::Ref do_load_mesh(aiMesh *aimesh) {
     format->add(VertexFormat::Position, 0, 3, GL_FLOAT);
     format->add(VertexFormat::Normal, 1, 3, GL_FLOAT);
 
-    Mesh::Ref mesh = Mesh::create(GL_TRIANGLES, 1);
-    mesh->bind();
-
     BufferObject::Ref index_buffer = BufferObject::create();
-    index_buffer->bind(GL_ELEMENT_ARRAY_BUFFER);
+    index_buffer->bind();
     index_buffer->data(sizeof(indices[0])*indices.size(), &indices[0]);
-    mesh->set_index_buffer(index_buffer, indices.size(), GL_UNSIGNED_INT);
+    index_buffer->unbind();
 
     BufferObject::Ref vertex_buffer = BufferObject::create();
-    vertex_buffer->bind(GL_ARRAY_BUFFER);
+    vertex_buffer->bind();
     vertex_buffer->data(sizeof(verts[0])*verts.size(), &verts[0]);
-    mesh->set_vertex_buffer(0, vertex_buffer, format);
+    vertex_buffer->unbind();
 
-    mesh->unbind();
+    Mesh::Ref mesh = Mesh::create(GL_TRIANGLES, 1);
+    mesh->set_vertex_buffer(0, vertex_buffer, format);
+    mesh->set_index_buffer(index_buffer, indices.size(), GL_UNSIGNED_INT);
+
     return mesh;
 }
 
@@ -516,29 +516,32 @@ int main(int argc, char *argv[]) {
     }
 
 
+    std::vector<vec2> qtree_lines;
     const int qtree_max_vertexes = 16000;
-    auto qtree_mesh = Mesh::create(GL_LINES, 1);
-    qtree_mesh->bind();
     auto qtree_fmt(VertexFormat::create());
     qtree_fmt->add(VertexFormat::Position, 0, 2, GL_FLOAT);
+    
     auto qtree_buf(BufferObject::create());
-    qtree_buf->bind(GL_ARRAY_BUFFER);
+    qtree_buf->bind();
     qtree_buf->data(sizeof(vec2)*qtree_max_vertexes, nullptr, GL_STREAM_DRAW);
-    qtree_mesh->set_vertex_buffer(0, qtree_buf, qtree_fmt);
-    qtree_mesh->unbind();
-    std::vector<vec2> qtree_lines;
+    qtree_buf->unbind();
 
+    auto qtree_mesh = Mesh::create(GL_LINES, 1);
+    qtree_mesh->set_vertex_buffer(0, qtree_buf, qtree_fmt);
+
+
+    std::vector<vec3> vlines_lines;
     const int vlines_max_vertexes = 16000;
-    auto vlines_mesh = Mesh::create(GL_LINES, 1);
-    vlines_mesh->bind();
     auto vlines_fmt(VertexFormat::create());
     vlines_fmt->add(VertexFormat::Position, 0, 3, GL_FLOAT);
+    
     auto vlines_buf(BufferObject::create());
-    vlines_buf->bind(GL_ARRAY_BUFFER);
+    vlines_buf->bind();
     vlines_buf->data(sizeof(vec2)*vlines_max_vertexes, nullptr, GL_STREAM_DRAW);
+    vlines_buf->unbind();
+
+    auto vlines_mesh = Mesh::create(GL_LINES, 1);
     vlines_mesh->set_vertex_buffer(0, vlines_buf, vlines_fmt);
-    vlines_mesh->unbind();
-    std::vector<vec3> vlines_lines;
 
     //SDL_SetRelativeMouseMode(SDL_TRUE);
 
@@ -632,9 +635,6 @@ int main(int argc, char *argv[]) {
             // update quad tree outline mesh
             qtree_lines.clear();
             world.quadtree.gather_outlines(qtree_lines);
-            /*for (auto b : world.bodies) {
-                qtree_lines.pu
-            }*/
             if (qtree_lines.size() > qtree_max_vertexes)
                 qtree_lines.resize(qtree_max_vertexes);
             qtree_buf->bind(GL_ARRAY_BUFFER);
@@ -666,7 +666,6 @@ int main(int argc, char *argv[]) {
             vlines_buf->unbind();
             vlines_mesh->set_num_vertexes(vlines_lines.size());
 
-            // render it (with depth writes off)
             auto cmd = renderqueue.add_command(qtree_program, vlines_mesh);
             cmd->add_uniform("m_pvm", projection_matrix * view_matrix);
             cmd->add_uniform("color", vec4(0.5f, 0.5f, 0.5f, 1));

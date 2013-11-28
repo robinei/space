@@ -10,7 +10,7 @@ public:
 
 	static Ref create();
 
-	void bind(GLenum target);
+    void bind(GLenum target = GL_COPY_READ_BUFFER);
 	void unbind();
 
 	void data(GLsizeiptr size, const GLvoid *data = 0, GLenum usage = GL_STATIC_DRAW);

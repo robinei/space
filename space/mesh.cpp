@@ -90,6 +90,8 @@ Mesh::Mesh(GLenum mode, int num_vertex_buffers) {
 	_num_buffers = num_vertex_buffers;
 	_buffers = new BufferObject::Ref[num_vertex_buffers];
 	_formats = new VertexFormat::Ref[num_vertex_buffers];
+
+    _dirty = true;
 }
 
 Mesh::~Mesh() {
@@ -125,7 +127,8 @@ GLenum Mesh::index_type() {
 void Mesh::set_index_buffer(BufferObject::Ref buf, GLsizei num_indexes, GLenum type) {
 	_index_buffer = buf;
 	_num_indexes = num_indexes;
-	_index_type = type;
+    _index_type = type;
+    _dirty = true;
 }
 
 int Mesh::num_vertex_buffers() {
@@ -144,26 +147,43 @@ VertexFormat::Ref Mesh::vertex_format(int i) {
 
 void Mesh::set_vertex_buffer(int i, BufferObject::Ref buf, VertexFormat::Ref format) {
 	_buffers[i] = buf;
-	_formats[i] = format;
-
-	for (auto &attrib : *format) {
-		glEnableVertexAttribArray(attrib.index);
-		GLsizei stride = format->stride();
-		if (format->_manual_offset_and_stride)
-			stride = attrib.stride;
-		if (!attrib.integer)
-			glVertexAttribPointer(attrib.index, attrib.size, attrib.type, attrib.normalized,
-			stride, (const GLvoid *)attrib.offset);
-		else
-			glVertexAttribIPointer(attrib.index, attrib.size, attrib.type,
-			stride, (const GLvoid *)attrib.offset);
-	}
+    _formats[i] = format;
+    _dirty = true;
 }
 
 void Mesh::bind() {
     glBindVertexArray(_vao);
-    // TODO: setup here (if dirty), and use offset to attrib.index
-    // also bind index buffer (if any)
+
+    if (!_dirty)
+        return;
+    _dirty = false;
+
+    for (int i = 0; i < _num_buffers; ++i) {
+        VertexFormat *fmt = _formats[i].get();
+        BufferObject *buf = _buffers[i].get();
+        if (!fmt)
+            continue;
+        if (!buf)
+            continue;
+
+        buf->bind(GL_ARRAY_BUFFER);
+
+        for (auto &attrib : *fmt) {
+            glEnableVertexAttribArray(attrib.index);
+            GLsizei stride = fmt->stride();
+            if (fmt->_manual_offset_and_stride)
+                stride = attrib.stride;
+            if (!attrib.integer)
+                glVertexAttribPointer(attrib.index, attrib.size, attrib.type, attrib.normalized,
+                stride, (const GLvoid *)attrib.offset);
+            else
+                glVertexAttribIPointer(attrib.index, attrib.size, attrib.type,
+                stride, (const GLvoid *)attrib.offset);
+        }
+    }
+
+    if (_index_buffer)
+        _index_buffer->bind(GL_ELEMENT_ARRAY_BUFFER);
 }
 
 void Mesh::unbind() {
