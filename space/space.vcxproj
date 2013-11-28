@@ -87,7 +87,7 @@
     <ClCompile Include="mesh.cpp" />
     <ClCompile Include="program.cpp" />
     <ClCompile Include="quadtree.cpp" />
-    <ClCompile Include="renderer.cpp" />
+    <ClCompile Include="renderqueue.cpp" />
     <ClCompile Include="stb_image.c" />
   </ItemGroup>
   <ItemGroup>
@@ -103,7 +103,7 @@
     <ClInclude Include="program.h" />
     <ClInclude Include="quadtree.h" />
     <ClInclude Include="refcounted.h" />
-    <ClInclude Include="renderer.h" />
+    <ClInclude Include="renderqueue.h" />
     <ClInclude Include="weakref.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -19,10 +19,19 @@ public:
     }
 
     ~Arena() {
-        if (curr_buffer)
-            delete [] curr_buffer;
-        for (size_t i = 0; i < buffers.size(); ++i)
-            delete [] buffers[i];
+        clear();
+    }
+
+    void clear() {
+        if (curr_buffer) {
+            delete[] curr_buffer;
+            curr_buffer = nullptr;
+            curr_used = 0;
+            curr_size = 0;
+            for (size_t i = 0; i < buffers.size(); ++i)
+                delete[] buffers[i];
+            buffers.clear();
+        }
     }
 
     template <class T>
@@ -31,11 +40,11 @@ public:
         return new (buf) T();
     }
 
-    /*template<class T, typename ...Args>
+    template<class T, typename ...Args>
     T *alloc(Args&&... params) {
         void *buf = alloc(sizeof(T));
         return new (buf) T(std::forward<Args>(params)...);
-    }*/
+    }
 
     void *alloc(int size) {
         if (curr_used + size < curr_size) {

@@ -19,7 +19,7 @@
 #include "fpscamera.h"
 #include "list.h"
 #include "quadtree.h"
-#include "renderer.h"
+#include "renderqueue.h"
 
 #define STBI_HEADER_FILE_ONLY
 #include "stb_image.c"
@@ -40,7 +40,7 @@ do { \
 
 
 
-static Renderer renderer;
+static RenderQueue renderqueue;
 static Program::Ref ship_program;
 static Program::Ref qtree_program;
 static Mesh::Ref mesh;
@@ -71,7 +71,7 @@ public:
     }
 
     virtual void update(World &world) {}
-    virtual void render(Renderer *renderer) {}
+    virtual void render(RenderQueue *renderer) {}
 
 private:
     Body(const Body &);
@@ -106,9 +106,9 @@ public:
             body->update(*this);
     }
 
-    void render(Renderer *renderer) {
+    void render() {
         for (Body *body : bodies)
-            body->render(renderer);
+            body->render(&renderqueue);
     }
 
 private:
@@ -232,24 +232,21 @@ public:
         return steer;
     }
 
-    void render(Renderer *renderer) {
+    void render(RenderQueue *renderqueue) {
         mat4 model = glm::translate(pos);
         mat4 vm = view_matrix * model;
         mat4 pvm = projection_matrix * vm;
         mat3 normal = glm::inverseTranspose(mat3(vm));
 
-        auto cmd = RenderCommand::create();
-        cmd->program = ship_program;
-        cmd->mesh = mesh;
-        cmd->set_uniform("m_pvm", pvm);
-        cmd->set_uniform("m_vm", vm);
-        cmd->set_uniform("m_normal", normal);
-        cmd->set_uniform("light_dir", light_dir);
-        cmd->set_uniform("mat_ambient", vec4(0.329412f, 0.223529f, 0.027451f, 1.0f));
-        cmd->set_uniform("mat_diffuse", vec4(0.780392f, 0.568627f, 0.113725f, 1.0f));
-        cmd->set_uniform("mat_specular", vec4(0.992157f, 0.941176f, 0.807843f, 1.0f));
-        cmd->set_uniform("mat_shininess", 27.89743616f);
-        renderer->add_command(cmd);
+        auto cmd = renderqueue->add_command(ship_program, mesh);
+        cmd->add_uniform("m_pvm", pvm);
+        cmd->add_uniform("m_vm", vm);
+        cmd->add_uniform("m_normal", normal);
+        cmd->add_uniform("light_dir", light_dir);
+        cmd->add_uniform("mat_ambient", vec4(0.329412f, 0.223529f, 0.027451f, 1.0f));
+        cmd->add_uniform("mat_diffuse", vec4(0.780392f, 0.568627f, 0.113725f, 1.0f));
+        cmd->add_uniform("mat_specular", vec4(0.992157f, 0.941176f, 0.807843f, 1.0f));
+        cmd->add_uniform("mat_shininess", 27.89743616f);
     }
 };
 
@@ -464,16 +461,16 @@ int main(int argc, char *argv[]) {
     }
 
 
-    auto qtreefmt(VertexFormat::create());
-    qtreefmt->add(VertexFormat::Position, 0, 2, GL_FLOAT);
-    auto qtreemesh = Mesh::create(GL_LINES, 1);
-    qtreemesh->bind();
-    auto qtreebuf(BufferObject::create());
-    qtreebuf->bind(GL_ARRAY_BUFFER);
-    qtreebuf->data(sizeof(vec2)*32000, nullptr, GL_STREAM_DRAW);
-    qtreemesh->set_vertex_buffer(0, qtreebuf, qtreefmt);
-    qtreemesh->unbind();
-    std::vector<vec2> qtreelines;
+    auto qtree_mesh = Mesh::create(GL_LINES, 1);
+    qtree_mesh->bind();
+    auto qtree_fmt(VertexFormat::create());
+    qtree_fmt->add(VertexFormat::Position, 0, 2, GL_FLOAT);
+    auto qtree_buf(BufferObject::create());
+    qtree_buf->bind(GL_ARRAY_BUFFER);
+    qtree_buf->data(sizeof(vec2)* 32000, nullptr, GL_STREAM_DRAW);
+    qtree_mesh->set_vertex_buffer(0, qtree_buf, qtree_fmt);
+    qtree_mesh->unbind();
+    std::vector<vec2> qtree_lines;
 
     //SDL_SetRelativeMouseMode(SDL_TRUE);
 
@@ -503,6 +500,10 @@ int main(int argc, char *argv[]) {
     bool running = true;
 
     while (running) {
+        //////////////////////////////////////////////////////////////////////////////////////////////////
+        // Updating:
+        //////////////////////////////////////////////////////////////////////////////////////////////////
+
         Uint32 ticks = SDL_GetTicks();
         Uint32 tickdiff = ticks - prevticks;
         prevticks = ticks;
@@ -544,8 +545,12 @@ int main(int argc, char *argv[]) {
 
         world.update();
         world.bodies.front()->pos = cursor_pos;
-        
-        // render stuff
+
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////
+        // Rendering:
+        //////////////////////////////////////////////////////////////////////////////////////////////////
+
         glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         glEnable(GL_DEPTH_TEST);
@@ -554,33 +559,30 @@ int main(int argc, char *argv[]) {
         glCullFace(GL_BACK);
 
         {
-            qtreelines.clear();
-            world.quadtree.gather_outlines(qtreelines);
-            qtreebuf->bind(GL_ARRAY_BUFFER);
-            qtreebuf->write(0, sizeof(qtreelines[0])*qtreelines.size(), &qtreelines[0]);
-            qtreebuf->unbind();
-            qtreemesh->set_num_vertexes(qtreelines.size());
+            qtree_lines.clear();
+            world.quadtree.gather_outlines(qtree_lines);
+            qtree_buf->bind(GL_ARRAY_BUFFER);
+            qtree_buf->write(0, sizeof(qtree_lines[0])*qtree_lines.size(), &qtree_lines[0]);
+            qtree_buf->unbind();
+            qtree_mesh->set_num_vertexes(qtree_lines.size());
 
-            auto cmd = RenderCommand::create();
-            cmd->program = qtree_program;
-            cmd->mesh = qtreemesh;
-            cmd->set_uniform("m_pvm", projection_matrix * view_matrix);
-            cmd->set_uniform("color", vec4(0.2f, 0.2f, 0.2f, 1));
-            renderer.add_command(cmd);
-            
             glDepthMask(GL_FALSE);
-            renderer.perform_commands();
-            renderer.clear_commands();
+            auto cmd = renderqueue.add_command(qtree_program, qtree_mesh);
+            cmd->add_uniform("m_pvm", projection_matrix * view_matrix);
+            cmd->add_uniform("color", vec4(0.2f, 0.2f, 0.2f, 1));
+            renderqueue.flush();
         }
 
-        world.render(&renderer);
-        
         glDepthMask(GL_TRUE);
-        renderer.sort_commands();
-        renderer.perform_commands();
-        renderer.clear_commands();
+        world.render();
+        renderqueue.flush();
         
         SDL_GL_SwapWindow(window);
+
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////
+        // Event handling:
+        //////////////////////////////////////////////////////////////////////////////////////////////////
 
         float speed = 50.0;
         float sensitivity = 0.01f;
