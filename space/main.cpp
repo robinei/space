@@ -43,7 +43,7 @@ do { \
 static RenderQueue renderqueue;
 static Program::Ref ship_program;
 static Program::Ref qtree_program;
-static Mesh::Ref mesh;
+static Mesh::Ref ship_mesh;
 
 static mat4 projection_matrix;
 static mat4 view_matrix;
@@ -87,8 +87,7 @@ public:
     QuadTree quadtree;
     float dt;
 
-    World() : quadtree(Rect(-1000, -1000, 1000, 1000), 6) {
-        puts("jalla0");
+    World() : quadtree(Rect(-1000, -1000, 1000, 1000), 7) {
     }
 
     ~World() {
@@ -127,11 +126,17 @@ struct UpdateContext {
     std::vector<QuadTree::Object *> neighbours;
 };
 
+vec3 limit(vec3 v, float len) {
+    if (glm::length(v) > len)
+        return glm::normalize(v) * len;
+    return v;
+}
 
 class Boid : public Body {
 public:
     float maxspeed;
     float maxforce;
+    int team;
 
     void update(World &world) {
         UpdateContext context(world);
@@ -140,16 +145,54 @@ public:
         //printf("context.neighbours: %d\n", context.neighbours.size());
 
         vec3 acc(0, 0, 0);
-        acc += separation(context) * 2.5f;
-        acc += alignment(context);
-        acc += cohesion(context);
-        acc += seek(cursor_pos) * 0.1f;
+        
+        acc += separation(context) * 1.5f;
+        acc += alignment(context) * 1.0f;
+        acc += cohesion(context) * 1.0f;
+        
+        acc += planehug(context) * 1.0f;
+        acc += zseparation(context) * 1.0f;
+        
+        acc += seek(cursor_pos) * 1.0f;
 
-        vel += acc;
+        vel += acc * world.dt;
+        vel = limit(vel, maxspeed);
 
         pos += vel * world.dt;
-        pos.z = 0;
+        //pos.z = 0;
+        
         qtree_update();
+    }
+
+    vec3 planehug(UpdateContext &context) {
+        vec3 target = pos;
+        target.z = 0;
+        return steer(target - pos);
+    }
+
+    vec3 zseparation(UpdateContext &context) {
+        float sep = 20.0f;
+        vec3 sum(0, 0, 0);
+        int count = 0;
+        for (auto obj : context.neighbours) {
+            Boid *b = static_cast<Boid *>(obj);
+            if (b == this) continue;
+            vec3 d = pos - b->pos;
+            float len = glm::length(d);
+            if (len > sep || len <= 0.00001f) continue;
+            //d = glm::normalize(d);
+            float dz = d.z;
+            if (dz == 0.0f)
+                dz = glm::dot(glm::normalize(vel), glm::normalize(b->vel));
+            dz /= fabsf(dz);
+            dz /= len;
+            sum += vec3(0, 0, dz);
+            ++count;
+        }
+        if (count == 0)
+            return vec3(0, 0, 0);
+        sum /= (float)count;
+        return steer(sum);
     }
 
     vec3 separation(UpdateContext &context) {
@@ -157,13 +200,11 @@ public:
         vec3 sum(0, 0, 0);
         int count = 0;
         for (auto obj : context.neighbours) {
-            Body *b = static_cast<Body *>(obj);
-            if (b == this)
-                continue;
+            Boid *b = static_cast<Boid *>(obj);
+            if (b == this) continue;
             vec3 d = pos - b->pos;
             float len = glm::length(d);
-            if (len > sep || len <= 0.00001f)
-                continue;
+            if (len > sep || len <= 0.00001f) continue;
             d = glm::normalize(d);
             d /= len;
             sum += d;
@@ -172,7 +213,7 @@ public:
         if (count == 0)
             return vec3(0, 0, 0);
         sum /= (float)count;
-        return steer_to(sum);
+        return steer(sum);
     }
 
     vec3 alignment(UpdateContext &context) {
@@ -180,20 +221,19 @@ public:
         vec3 sum(0, 0, 0);
         int count = 0;
         for (auto obj : context.neighbours) {
-            Body *b = static_cast<Body *>(obj);
-            if (b == this)
-                continue;
+            Boid *b = static_cast<Boid *>(obj);
+            if (b == this) continue;
+            if (b->team != team) continue;
             vec3 d = pos - b->pos;
             float dist = glm::length(d);
-            if (dist > neighbordist)
-                continue;
+            if (dist > neighbordist) continue;
             sum += b->vel;
             ++count;
         }
         if (count == 0)
             return vec3(0, 0, 0);
         sum /= (float)count;
-        return steer_to(sum);
+        return steer(sum);
     }
 
     vec3 cohesion(UpdateContext &context) {
@@ -201,13 +241,12 @@ public:
         vec3 sum(0, 0, 0);
         int count = 0;
         for (auto obj : context.neighbours) {
-            Body *b = static_cast<Body *>(obj);
-            if (b == this)
-                continue;
+            Boid *b = static_cast<Boid *>(obj);
+            if (b == this) continue;
+            if (b->team != team) continue;
             vec3 d = pos - b->pos;
-            float dist = glm::length(d);
-            if (dist > neighbordist)
-                continue;
+            float len = glm::length(d);
+            if (len > neighbordist) continue;
             sum += b->pos;
             ++count;
         }
@@ -218,35 +257,52 @@ public:
     }
 
     vec3 seek(vec3 target) {
-        return steer_to(target - pos);
+        return steer(target - pos);
     }
 
-    vec3 steer_to(vec3 dir) {
+    vec3 steer(vec3 dir) {
         float len = glm::length(dir);
         if (len < 0.000001f)
             return vec3(0, 0, 0);
         dir *= maxspeed / len;
-        vec3 steer = dir - vel;
-        if (glm::length(steer) > maxforce)
-            steer = glm::normalize(steer) * maxforce;
-        return steer;
+        return limit(dir - vel, maxforce);
+    }
+
+    mat4 calc_rotation_matrix() {
+        vec3 temp_up(0, 0, 1);
+        vec3 forward(glm::normalize(-vel));
+        vec3 right(glm::cross(forward, temp_up));
+        vec3 up(glm::cross(right, forward));
+
+        mat4 m;
+        m[0] = vec4(right, 0);
+        m[1] = vec4(forward, 0);
+        m[2] = vec4(up, 0);
+        return m;
     }
 
     void render(RenderQueue *renderqueue) {
-        mat4 model = glm::translate(pos);
+        mat4 model = glm::translate(pos) * calc_rotation_matrix();
         mat4 vm = view_matrix * model;
         mat4 pvm = projection_matrix * vm;
         mat3 normal = glm::inverseTranspose(mat3(vm));
 
-        auto cmd = renderqueue->add_command(ship_program, mesh);
+        auto cmd = renderqueue->add_command(ship_program, ship_mesh);
         cmd->add_uniform("m_pvm", pvm);
         cmd->add_uniform("m_vm", vm);
         cmd->add_uniform("m_normal", normal);
         cmd->add_uniform("light_dir", light_dir);
-        cmd->add_uniform("mat_ambient", vec4(0.329412f, 0.223529f, 0.027451f, 1.0f));
-        cmd->add_uniform("mat_diffuse", vec4(0.780392f, 0.568627f, 0.113725f, 1.0f));
-        cmd->add_uniform("mat_specular", vec4(0.992157f, 0.941176f, 0.807843f, 1.0f));
-        cmd->add_uniform("mat_shininess", 27.89743616f);
+        if (team == 0) {
+            cmd->add_uniform("mat_ambient", vec4(0.25f, 0.25f, 0.25f, 1));
+            cmd->add_uniform("mat_diffuse", vec4(0.4f, 0.4f, 0.4f, 1));
+            cmd->add_uniform("mat_specular", vec4(0.774597f, 0.774597f, 0.774597f, 1));
+            cmd->add_uniform("mat_shininess", 76.8f);
+        } else {
+            cmd->add_uniform("mat_ambient", vec4(0.329412f, 0.223529f, 0.027451f, 1.0f));
+            cmd->add_uniform("mat_diffuse", vec4(0.780392f, 0.568627f, 0.113725f, 1.0f));
+            cmd->add_uniform("mat_specular", vec4(0.992157f, 0.941176f, 0.807843f, 1.0f));
+            cmd->add_uniform("mat_shininess", 27.89743616f);
+        }
     }
 };
 
@@ -366,8 +422,8 @@ Mesh::Ref load_mesh(const std::string &filename) {
 
 
 static void LoadTriangle() {
-    //mesh = load_mesh("Shipyard.ply");
-    mesh = load_mesh("mauriceh_spaceship_model.ply");
+    //ship_mesh = load_mesh("Shipyard.ply");
+    ship_mesh = load_mesh("mauriceh_spaceship_model.ply");
 
     ship_program = Program::create();
     ship_program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/simple.vert"));
@@ -409,7 +465,7 @@ int main(int argc, char *argv[]) {
     ok = ok && SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8) == 0;
     ok = ok && SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8) == 0;
     ok = ok && SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8) == 0;
-    ok = ok && SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 16) == 0;
+    ok = ok && SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24) == 0;
     ok = ok && SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1) == 0;
     ok = ok && SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 8) == 0;
     ok = ok && SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 1) == 0;
@@ -461,39 +517,54 @@ int main(int argc, char *argv[]) {
     }
 
 
+    const int qtree_max_vertexes = 16000;
     auto qtree_mesh = Mesh::create(GL_LINES, 1);
     qtree_mesh->bind();
     auto qtree_fmt(VertexFormat::create());
     qtree_fmt->add(VertexFormat::Position, 0, 2, GL_FLOAT);
     auto qtree_buf(BufferObject::create());
     qtree_buf->bind(GL_ARRAY_BUFFER);
-    qtree_buf->data(sizeof(vec2)* 32000, nullptr, GL_STREAM_DRAW);
+    qtree_buf->data(sizeof(vec2)*qtree_max_vertexes, nullptr, GL_STREAM_DRAW);
     qtree_mesh->set_vertex_buffer(0, qtree_buf, qtree_fmt);
     qtree_mesh->unbind();
     std::vector<vec2> qtree_lines;
+
+    const int vlines_max_vertexes = 16000;
+    auto vlines_mesh = Mesh::create(GL_LINES, 1);
+    vlines_mesh->bind();
+    auto vlines_fmt(VertexFormat::create());
+    vlines_fmt->add(VertexFormat::Position, 0, 3, GL_FLOAT);
+    auto vlines_buf(BufferObject::create());
+    vlines_buf->bind(GL_ARRAY_BUFFER);
+    vlines_buf->data(sizeof(vec2)*vlines_max_vertexes, nullptr, GL_STREAM_DRAW);
+    vlines_mesh->set_vertex_buffer(0, vlines_buf, vlines_fmt);
+    vlines_mesh->unbind();
+    std::vector<vec3> vlines_lines;
 
     //SDL_SetRelativeMouseMode(SDL_TRUE);
 
     World world;
 
-    for (int i = 0; i < 20; ++i) {
+    for (int i = 0; i < 40; ++i) {
         Boid *b = new Boid();
         b->pos = vec3(glm::diskRand(200.0f), 0.0f);
         b->vel = vec3(glm::diskRand(10.0f), 0.0f);
-        b->maxspeed = 50.0f;
-        b->maxforce = 10.0f;
+        b->maxspeed = 40;
+        b->maxforce = 1;
+        b->team = rand() % 2;
         world.add_body(b);
     }
 
     vec3 camera_pos(0, -5, 20);
-    float viewport_radius = 40;
+    vec3 camera_right(1, -1, 0);
+    vec3 camera_forward(1, 1, 0);
     float aspect_ratio = (float)mode.w / (float)mode.h;
 
     /*FPSCamera camera;
     camera.set_pos(camera_pos);
     camera.look_at(camera_pos + vec3(0.0f, 1.0f, -2.0f));*/
 
-    light_dir = vec3(-1, 1, -1);
+    light_dir = vec3(1, 1, 3);
 
     const Uint8 *keys = SDL_GetKeyboardState(0);
     Uint32 prevticks = SDL_GetTicks();
@@ -515,23 +586,23 @@ int main(int argc, char *argv[]) {
 
 #define ORTHO 1
 #if ORTHO
+        float viewport_radius = camera_pos.z;
         projection_matrix = glm::ortho(-viewport_radius*aspect_ratio,
                                        viewport_radius*aspect_ratio,
                                        -viewport_radius,
                                        viewport_radius,
-                                       -1000.0f,
-                                       1000.0f);
+                                       -10000.0f,
+                                       10000.0f);
 #else
-        projection_matrix = glm::perspective(45.0f, aspect_ratio, 0.1f, 1000.0f);
+        projection_matrix = glm::perspective(45.0f, aspect_ratio, 0.1f, 10000.0f);
 #endif
 
         view_matrix = glm::lookAt(camera_pos,
-                                  camera_pos + vec3(0.0f, 1.0f, -2.0f),
+                                  camera_pos + vec3(1, 1, -1),
                                   vec3(0, 0, 1));
         //view_matrix = camera.view_matrix();
 
-        light_dir = glm::normalize(glm::angleAxis(dt*100.0f, vec3(0, 1, 0)) * light_dir);
-        light_dir = glm::normalize(glm::angleAxis(dt*10.0f, vec3(1, 0, 0)) * light_dir);
+        light_dir = glm::normalize(glm::angleAxis(dt*10.0f, vec3(0, 0, 1)) * light_dir);
 
         {
             vec3 P0 = glm::unProject(vec3(mx, mode.h - my - 1, 0), view_matrix, projection_matrix, vec4(0, 0, mode.w, mode.h));
@@ -544,7 +615,7 @@ int main(int argc, char *argv[]) {
         }
 
         world.update();
-        world.bodies.front()->pos = cursor_pos;
+        //world.bodies.front()->pos = cursor_pos;
 
 
         //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -559,21 +630,50 @@ int main(int argc, char *argv[]) {
         glCullFace(GL_BACK);
 
         {
+            // update quad tree outline mesh
             qtree_lines.clear();
             world.quadtree.gather_outlines(qtree_lines);
+            /*for (auto b : world.bodies) {
+                qtree_lines.pu
+            }*/
+            if (qtree_lines.size() > qtree_max_vertexes)
+                qtree_lines.resize(qtree_max_vertexes);
             qtree_buf->bind(GL_ARRAY_BUFFER);
             qtree_buf->write(0, sizeof(qtree_lines[0])*qtree_lines.size(), &qtree_lines[0]);
             qtree_buf->unbind();
             qtree_mesh->set_num_vertexes(qtree_lines.size());
 
-            glDepthMask(GL_FALSE);
+            // render it (with depth writes off)
             auto cmd = renderqueue.add_command(qtree_program, qtree_mesh);
             cmd->add_uniform("m_pvm", projection_matrix * view_matrix);
             cmd->add_uniform("color", vec4(0.2f, 0.2f, 0.2f, 1));
+            glDepthMask(GL_FALSE);
+            renderqueue.flush();
+            glDepthMask(GL_TRUE);
+        }
+
+        {
+            vlines_lines.clear();
+            for (auto b : world.bodies) {
+                vec3 pos = b->pos;
+                pos.z = 0;
+                vlines_lines.push_back(pos);
+                vlines_lines.push_back(b->pos);
+            }
+            if (vlines_lines.size() > vlines_max_vertexes)
+                vlines_lines.resize(vlines_max_vertexes);
+            vlines_buf->bind(GL_ARRAY_BUFFER);
+            vlines_buf->write(0, sizeof(vlines_lines[0])*vlines_lines.size(), &vlines_lines[0]);
+            vlines_buf->unbind();
+            vlines_mesh->set_num_vertexes(vlines_lines.size());
+
+            // render it (with depth writes off)
+            auto cmd = renderqueue.add_command(qtree_program, vlines_mesh);
+            cmd->add_uniform("m_pvm", projection_matrix * view_matrix);
+            cmd->add_uniform("color", vec4(0.5f, 0.5f, 0.5f, 1));
             renderqueue.flush();
         }
 
-        glDepthMask(GL_TRUE);
         world.render();
         renderqueue.flush();
         
@@ -584,17 +684,17 @@ int main(int argc, char *argv[]) {
         // Event handling:
         //////////////////////////////////////////////////////////////////////////////////////////////////
 
-        float speed = 50.0;
+        float speed = 1.0;
         float sensitivity = 0.01f;
 
         if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A] || mx == 0)
-            camera_pos.x -= dt*speed;
+            camera_pos -= camera_right*camera_pos.z*dt*speed;
         if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D] || mx == mode.w - 1)
-            camera_pos.x += dt*speed;
+            camera_pos += camera_right*camera_pos.z*dt*speed;
         if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W] || my == 0)
-            camera_pos.y += dt*speed;
+            camera_pos += camera_forward*camera_pos.z*dt*speed;
         if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S] || my == mode.h - 1)
-            camera_pos.y -= dt*speed;
+            camera_pos -= camera_forward*camera_pos.z*dt*speed;
         /*if (keys[SDL_SCANCODE_SPACE])
             camera_pos.y += dt*speed;
         if (keys[SDL_SCANCODE_C])
@@ -625,19 +725,11 @@ int main(int argc, char *argv[]) {
                 //camera.rotate((float)event.motion.xrel * -sensitivity, (float)event.motion.yrel * -sensitivity);
                 break;
             case SDL_MOUSEWHEEL:
-#if ORTHO
-                viewport_radius += -0.2f * event.wheel.y * viewport_radius;
-                if (viewport_radius > 200.0f)
-                    viewport_radius = 200.0f;
-                if (viewport_radius < 20.0f)
-                    viewport_radius = 20.0f;
-#else    
                 camera_pos.z += -0.4f * event.wheel.y * camera_pos.z;
                 if (camera_pos.z < 1.0f)
                     camera_pos.z = 1.0f;
-                if (camera_pos.z > 500.0f)
-                    camera_pos.z = 500.0f;
-#endif
+                if (camera_pos.z > 1000.0f)
+                    camera_pos.z = 1000.0f;
                 break;
             case SDL_QUIT:
                 running = false;
@@ -648,7 +740,7 @@ int main(int argc, char *argv[]) {
 
     ship_program = 0;
     qtree_program = 0;
-    mesh = 0;
+    ship_mesh = 0;
 
     SDL_GL_DeleteContext(glcontext);
     SDL_DestroyWindow(window);
