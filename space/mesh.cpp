@@ -161,7 +161,9 @@ void Mesh::set_vertex_buffer(int i, BufferObject::Ref buf, VertexFormat::Ref for
 }
 
 void Mesh::bind() {
-	glBindVertexArray(_vao);
+    glBindVertexArray(_vao);
+    // TODO: setup here (if dirty), and use offset to attrib.index
+    // also bind index buffer (if any)
 }
 
 void Mesh::unbind() {

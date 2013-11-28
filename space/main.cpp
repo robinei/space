@@ -422,8 +422,7 @@ Mesh::Ref load_mesh(const std::string &filename) {
 
 
 static void LoadTriangle() {
-    //ship_mesh = load_mesh("Shipyard.ply");
-    ship_mesh = load_mesh("mauriceh_spaceship_model.ply");
+    ship_mesh = load_mesh("../data/meshes/harv.ply");
 
     ship_program = Program::create();
     ship_program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/simple.vert"));
@@ -748,3 +747,9 @@ int main(int argc, char *argv[]) {
     printf("Done.\n");
     return 0;
 }
+
+
+/*
+TODO: implement object pool. use it for bodies and associated data (like behaviors)
+*/
+
