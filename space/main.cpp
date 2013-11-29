@@ -81,6 +81,8 @@ private:
 };
 
 
+void free_body(Body *b);
+
 class World {
 public:
     typedef List<Body, &Body::world_link> BodyList;
@@ -94,7 +96,7 @@ public:
 
     ~World() {
         while (!bodies.empty())
-            pool_free(bodies.front());
+            free_body(bodies.front());
     }
 
     void add_body(Body *body) {
@@ -346,6 +348,10 @@ static void spawn_boid(World &world, vec3 pos) {
     b->maxforce = 1;
     b->team = rand() % 2;
     world.add_body(b);
+}
+
+void free_body(Body *b) {
+    boid_pool.free(static_cast<Boid *>(b));
 }
 
 

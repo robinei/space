@@ -253,7 +253,7 @@ Node *QuadTree::new_node(Node *parent, Rect rect) {
 void QuadTree::free_node(Node *n) {
     assert(!n->child[0]);
     assert(n->objects.empty());
-    pool_free(n);
+    pool.free(n);
 }
 
 
