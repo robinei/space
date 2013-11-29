@@ -11,13 +11,15 @@
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/random.hpp>
 #include <glm/gtx/transform.hpp>
+#include <glm/gtx/vector_angle.hpp>
 #include "opengl.h"
 
+#include "list.h"
+#include "pool.h"
 #include "program.h"
 #include "bufferobject.h"
 #include "mesh.h"
 #include "fpscamera.h"
-#include "list.h"
 #include "quadtree.h"
 #include "renderqueue.h"
 
@@ -92,7 +94,7 @@ public:
 
     ~World() {
         while (!bodies.empty())
-            delete bodies.front();
+            pool_free(bodies.front());
     }
 
     void add_body(Body *body) {
@@ -134,6 +136,7 @@ vec3 limit(vec3 v, float len) {
 
 class Boid : public Body {
 public:
+    vec3 dir;
     float maxspeed;
     float maxforce;
     int team;
@@ -150,8 +153,8 @@ public:
         acc += alignment(context) * 1.0f;
         acc += cohesion(context) * 1.0f;
         
-        acc += planehug(context) * 1.0f;
-        acc += zseparation(context) * 1.0f;
+        acc += planehug(context) * 1.5f;
+        acc += zseparation(context) * 1.5f;
         
         acc += seek(cursor_pos) * 1.0f;
 
@@ -162,12 +165,19 @@ public:
         //pos.z = 0;
         
         qtree_update();
+
+        vec3 v = glm::normalize(vel);
+        float a = glm::angle(dir, v);
+        if (fabsf(a) > 0.001f) {
+            vec3 axis(glm::cross(dir, v));
+            dir = glm::normalize(dir * glm::angleAxis(glm::min(45.0f * world.dt, a), axis));
+        }
     }
 
     vec3 planehug(UpdateContext &context) {
         vec3 target = pos;
         target.z = 0;
-        return steer(target - pos);
+        return arrive(target);
     }
 
     vec3 zseparation(UpdateContext &context) {
@@ -203,6 +213,7 @@ public:
             Boid *b = static_cast<Boid *>(obj);
             if (b == this) continue;
             vec3 d = pos - b->pos;
+            d.z = 0;
             float len = glm::length(d);
             if (len > sep || len <= 0.00001f) continue;
             d = glm::normalize(d);
@@ -268,11 +279,28 @@ public:
         return limit(dir - vel, maxforce);
     }
 
+    vec3 arrive(vec3 target) {
+        float brakelimit = 10.0f;
+        vec3 desired = target - pos;
+        float len = glm::length(desired);
+        if (len < 0.000001f)
+            return vec3(0, 0, 0);
+        desired /= len;
+        if (len < brakelimit) {
+            desired *= (len / brakelimit) * maxspeed;
+        } else {
+            desired *= maxspeed;
+        }
+        return limit(desired, maxforce);
+    }
+
     mat4 calc_rotation_matrix() {
-        vec3 temp_up(0, 0, 1);
-        vec3 forward(glm::normalize(-vel));
-        vec3 right(glm::cross(forward, temp_up));
-        vec3 up(glm::cross(right, forward));
+        vec3 up(0, 0, 1);
+        vec3 forward(glm::normalize(dir));
+        vec3 right(glm::cross(forward, up));
+        up = glm::cross(right, forward);
+        right = glm::normalize(glm::cross(forward, up));
+        up = glm::normalize(glm::cross(right, forward));
 
         mat4 m;
         m[0] = vec4(right, 0);
@@ -307,6 +335,18 @@ public:
 };
 
 
+Pool<Boid> boid_pool;
+
+static void spawn_boid(World &world, vec3 pos) {
+    Boid *b = boid_pool.create();
+    b->pos = pos;
+    b->vel = vec3(glm::diskRand(10.0f), 0.0f);
+    b->dir = glm::normalize(b->vel);
+    b->maxspeed = 40;
+    b->maxforce = 1;
+    b->team = rand() % 2;
+    world.add_body(b);
+}
 
 
 
@@ -443,6 +483,9 @@ static void LoadTriangle() {
 
 
 
+
+
+
 int main(int argc, char *argv[]) {
 #ifdef WIN32
     if (AttachConsole(ATTACH_PARENT_PROCESS)) {
@@ -466,7 +509,7 @@ int main(int argc, char *argv[]) {
     ok = ok && SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8) == 0;
     ok = ok && SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24) == 0;
     ok = ok && SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1) == 0;
-    ok = ok && SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 8) == 0;
+    ok = ok && SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4) == 0;
     ok = ok && SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 1) == 0;
     if (!ok)
         die("SDL_GL_SetAttribute() error: %s", SDL_GetError());
@@ -548,25 +591,16 @@ int main(int argc, char *argv[]) {
     World world;
 
     for (int i = 0; i < 40; ++i) {
-        Boid *b = new Boid();
-        b->pos = vec3(glm::diskRand(200.0f), 0.0f);
-        b->vel = vec3(glm::diskRand(10.0f), 0.0f);
-        b->maxspeed = 40;
-        b->maxforce = 1;
-        b->team = rand() % 2;
-        world.add_body(b);
+        spawn_boid(world, vec3(glm::diskRand(200.0f), 0.0f));
     }
 
     vec3 camera_pos(0, -5, 20);
     vec3 camera_right(1, -1, 0);
     vec3 camera_forward(1, 1, 0);
     float aspect_ratio = (float)mode.w / (float)mode.h;
+    bool orthogonal_projection = true;
 
-    /*FPSCamera camera;
-    camera.set_pos(camera_pos);
-    camera.look_at(camera_pos + vec3(0.0f, 1.0f, -2.0f));*/
-
-    light_dir = vec3(1, 1, 3);
+    light_dir = glm::normalize(vec3(1, 0, 3));
 
     const Uint8 *keys = SDL_GetKeyboardState(0);
     Uint32 prevticks = SDL_GetTicks();
@@ -586,34 +620,25 @@ int main(int argc, char *argv[]) {
         int mx = 0, my = 0;
         SDL_GetMouseState(&mx, &my);
 
-#define ORTHO 1
-#if ORTHO
-        float viewport_radius = camera_pos.z;
-        projection_matrix = glm::ortho(-viewport_radius*aspect_ratio,
-                                       viewport_radius*aspect_ratio,
-                                       -viewport_radius,
-                                       viewport_radius,
-                                       -10000.0f,
-                                       10000.0f);
-#else
-        projection_matrix = glm::perspective(45.0f, aspect_ratio, 0.1f, 10000.0f);
-#endif
+        if (orthogonal_projection) {
+            float dim = camera_pos.z;
+            projection_matrix = glm::ortho(-dim*aspect_ratio, dim*aspect_ratio,
+                                           -dim, dim,
+                                           -10000.0f, 10000.0f);
+        } else {
+            projection_matrix = glm::perspective(45.0f, aspect_ratio, 0.1f, 10000.0f);
+        }
 
         view_matrix = glm::lookAt(camera_pos,
                                   camera_pos + vec3(1, 1, -1),
                                   vec3(0, 0, 1));
-        //view_matrix = camera.view_matrix();
 
-        light_dir = glm::normalize(glm::angleAxis(dt*10.0f, vec3(0, 0, 1)) * light_dir);
+        //light_dir = glm::normalize(glm::angleAxis(dt*10.0f, vec3(0, 0, 1)) * light_dir);
 
         {
-            vec3 P0 = glm::unProject(vec3(mx, mode.h - my - 1, 0), view_matrix, projection_matrix, vec4(0, 0, mode.w, mode.h));
-            vec3 P1 = glm::unProject(vec3(mx, mode.h - my - 1, 1), view_matrix, projection_matrix, vec4(0, 0, mode.w, mode.h));
-            vec3 V = glm::normalize(P1 - P0);
-            vec3 N(0, 0, 1);
-            float d = 0;
-            float t = -(glm::dot(P0, N) + d) / glm::dot(V, N);
-            cursor_pos = P0 + V * t;
+            vec3 p0 = glm::unProject(vec3(mx, mode.h - my - 1, 0), view_matrix, projection_matrix, vec4(0, 0, mode.w, mode.h));
+            vec3 p1 = glm::unProject(vec3(mx, mode.h - my - 1, 1), view_matrix, projection_matrix, vec4(0, 0, mode.w, mode.h));
+            cursor_pos = Plane::XY().ray_intersect(p0, p1);
         }
 
         world.update();
@@ -632,17 +657,15 @@ int main(int argc, char *argv[]) {
         glCullFace(GL_BACK);
 
         {
-            // update quad tree outline mesh
             qtree_lines.clear();
             world.quadtree.gather_outlines(qtree_lines);
             if (qtree_lines.size() > qtree_max_vertexes)
                 qtree_lines.resize(qtree_max_vertexes);
-            qtree_buf->bind(GL_ARRAY_BUFFER);
+            qtree_buf->bind();
             qtree_buf->write(0, sizeof(qtree_lines[0])*qtree_lines.size(), &qtree_lines[0]);
             qtree_buf->unbind();
             qtree_mesh->set_num_vertexes(qtree_lines.size());
 
-            // render it (with depth writes off)
             auto cmd = renderqueue.add_command(qtree_program, qtree_mesh);
             cmd->add_uniform("m_pvm", projection_matrix * view_matrix);
             cmd->add_uniform("color", vec4(0.2f, 0.2f, 0.2f, 1));
@@ -661,7 +684,7 @@ int main(int argc, char *argv[]) {
             }
             if (vlines_lines.size() > vlines_max_vertexes)
                 vlines_lines.resize(vlines_max_vertexes);
-            vlines_buf->bind(GL_ARRAY_BUFFER);
+            vlines_buf->bind();
             vlines_buf->write(0, sizeof(vlines_lines[0])*vlines_lines.size(), &vlines_lines[0]);
             vlines_buf->unbind();
             vlines_mesh->set_num_vertexes(vlines_lines.size());
@@ -693,22 +716,6 @@ int main(int argc, char *argv[]) {
             camera_pos += camera_forward*camera_pos.z*dt*speed;
         if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S] || my == mode.h - 1)
             camera_pos -= camera_forward*camera_pos.z*dt*speed;
-        /*if (keys[SDL_SCANCODE_SPACE])
-            camera_pos.y += dt*speed;
-        if (keys[SDL_SCANCODE_C])
-            camera_pos.y -= dt*speed;*/
-        /*if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A])
-            camera.strafe(-dt*speed);
-        if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D])
-            camera.strafe(dt*speed);
-        if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W])
-            camera.step(dt*speed);
-        if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S])
-            camera.step(-dt*speed);
-        if (keys[SDL_SCANCODE_SPACE])
-            camera.rise(dt*speed);
-        if (keys[SDL_SCANCODE_C])
-            camera.rise(-dt*speed);*/
 
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -718,16 +725,25 @@ int main(int argc, char *argv[]) {
             case SDL_KEYUP:
                 if (event.key.keysym.sym == SDLK_ESCAPE)
                     running = false;
+                if (event.key.keysym.sym == SDLK_p)
+                    orthogonal_projection = !orthogonal_projection;
                 break;
             case SDL_MOUSEMOTION:
-                //camera.rotate((float)event.motion.xrel * -sensitivity, (float)event.motion.yrel * -sensitivity);
                 break;
-            case SDL_MOUSEWHEEL:
-                camera_pos.z += -0.4f * event.wheel.y * camera_pos.z;
-                if (camera_pos.z < 1.0f)
-                    camera_pos.z = 1.0f;
-                if (camera_pos.z > 1000.0f)
-                    camera_pos.z = 1000.0f;
+            case SDL_MOUSEWHEEL: {
+                vec3 d = (cursor_pos - camera_pos) * (0.4f * event.wheel.y);
+                vec3 p = camera_pos + d;
+                float min_z = 10.0f;
+                float max_z = 1000.0f;
+                if (p.z < min_z)
+                    p = Plane::XY(-min_z).ray_intersect(camera_pos, cursor_pos);
+                else if (p.z > max_z)
+                    p = Plane::XY(-max_z).ray_intersect(cursor_pos, camera_pos);
+                camera_pos = p;
+                break;
+            }
+            case SDL_MOUSEBUTTONDOWN:
+                spawn_boid(world, cursor_pos);
                 break;
             case SDL_QUIT:
                 running = false;
@@ -746,9 +762,3 @@ int main(int argc, char *argv[]) {
     printf("Done.\n");
     return 0;
 }
-
-
-/*
-TODO: implement object pool. use it for bodies and associated data (like behaviors)
-*/
-

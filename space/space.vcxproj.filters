@@ -77,5 +77,8 @@
     <ClInclude Include="renderqueue.h">
       <Filter>render</Filter>
     </ClInclude>
+    <ClInclude Include="pool.h">
+      <Filter>common</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

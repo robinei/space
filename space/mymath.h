@@ -46,5 +46,21 @@ public:
     }
 };
 
+struct Plane {
+    vec3 n;
+    float d;
+
+    Plane(vec3 n, float d = 0) : n(n), d(d) {}
+
+    vec3 ray_intersect(vec3 p0, vec3 p1) {
+        vec3 v = glm::normalize(p1 - p0);
+        float t = -(glm::dot(p0, n) + d) / glm::dot(v, n);
+        return p0 + v * t;
+    }
+
+    static Plane XY(float d=0) { return Plane(vec3(0, 0, 1), d); }
+    static Plane XZ(float d=0) { return Plane(vec3(0, 1, 0), d); }
+    static Plane YZ(float d=0) { return Plane(vec3(1, 0, 0), d); }
+};
 
 #endif

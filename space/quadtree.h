@@ -3,7 +3,7 @@
 
 #include "listlink.h"
 #include "mymath.h"
-#include "arena.h"
+#include "pool.h"
 #include <vector>
 
 class QuadTree {
@@ -47,9 +47,8 @@ private:
     class Node *new_node(class Node *parent, Rect rect);
     void free_node(class Node *n);
 
-    Arena arena;
+    Pool<class Node> pool;
     int max_depth;
-    class Node *freelist;
     class Node *root;
 };
 

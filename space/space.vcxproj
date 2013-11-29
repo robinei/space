@@ -100,6 +100,7 @@
     <ClInclude Include="mesh.h" />
     <ClInclude Include="mymath.h" />
     <ClInclude Include="opengl.h" />
+    <ClInclude Include="pool.h" />
     <ClInclude Include="program.h" />
     <ClInclude Include="quadtree.h" />
     <ClInclude Include="refcounted.h" />

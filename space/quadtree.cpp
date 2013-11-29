@@ -115,7 +115,7 @@ void QuadTree::Object::qtree_update() {
 
 
 
-QuadTree::QuadTree(Rect rect, int max_depth) : max_depth(max_depth), freelist(nullptr) {
+QuadTree::QuadTree(Rect rect, int max_depth) : max_depth(max_depth) {
     root = new_node(nullptr, rect);
 }
 
@@ -235,11 +235,7 @@ void QuadTree::gather_outlines(std::vector<vec2> &lines) {
 }
 
 Node *QuadTree::new_node(Node *parent, Rect rect) {
-    Node *n = freelist;
-    if (n)
-        freelist = n->parent;
-    else
-        n = arena.alloc<Node>();
+    Node *n = pool.create();
     n->rect = rect;
     n->center = rect.center();
     n->qtree = this;
@@ -257,8 +253,7 @@ Node *QuadTree::new_node(Node *parent, Rect rect) {
 void QuadTree::free_node(Node *n) {
     assert(!n->child[0]);
     assert(n->objects.empty());
-    n->parent = freelist;
-    freelist = n;
+    pool_free(n);
 }
 
 
