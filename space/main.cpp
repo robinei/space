@@ -56,6 +56,451 @@ static vec3 cursor_pos;
 
 
 
+
+
+struct MeshFileHeader {
+    uint32_t fourcc;
+    uint32_t version;
+
+    uint32_t num_vertices;
+    uint32_t num_indices;
+
+    uint32_t have_normals;
+    uint32_t have_tangents;
+    uint32_t have_bitangents;
+    uint32_t num_texcoord_sets;
+    uint32_t num_color_sets;
+};
+
+
+
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+
+
+static Mesh::Ref do_load_mesh(aiMesh *aimesh) {
+    std::vector<GLfloat> verts;
+    std::vector<GLuint> indices;
+
+    assert(aimesh->HasPositions());
+    assert(aimesh->HasNormals());
+
+    for (unsigned int i = 0; i < aimesh->mNumVertices; ++i) {
+        aiVector3D v = aimesh->mVertices[i];
+        verts.push_back(v.x);
+        verts.push_back(v.y);
+        verts.push_back(v.z);
+
+        aiVector3D n = aimesh->mNormals[i];
+        verts.push_back(n.x);
+        verts.push_back(n.y);
+        verts.push_back(n.z);
+    }
+
+    for (unsigned int i = 0; i < aimesh->mNumFaces; ++i) {
+        aiFace f = aimesh->mFaces[i];
+        if (f.mNumIndices != 3)
+            return 0;
+        indices.push_back(f.mIndices[0]);
+        indices.push_back(f.mIndices[1]);
+        indices.push_back(f.mIndices[2]);
+    }
+
+    VertexFormat::Ref format = VertexFormat::create();
+    format->add(VertexFormat::Position, 0, 3, GL_FLOAT);
+    format->add(VertexFormat::Normal, 1, 3, GL_FLOAT);
+
+    BufferObject::Ref index_buffer = BufferObject::create();
+    index_buffer->bind();
+    index_buffer->data(sizeof(indices[0])*indices.size(), &indices[0]);
+    index_buffer->unbind();
+
+    BufferObject::Ref vertex_buffer = BufferObject::create();
+    vertex_buffer->bind();
+    vertex_buffer->data(sizeof(verts[0])*verts.size(), &verts[0]);
+    vertex_buffer->unbind();
+
+    Mesh::Ref mesh = Mesh::create(GL_TRIANGLES, 1);
+    mesh->set_vertex_buffer(0, vertex_buffer, format);
+    mesh->set_index_buffer(index_buffer, indices.size(), GL_UNSIGNED_INT);
+
+    return mesh;
+}
+
+Mesh::Ref load_mesh(const std::string &filename) {
+    Assimp::Importer importer;
+
+    const aiScene* scene = importer.ReadFile(filename,
+                                             aiProcess_Triangulate |
+                                             aiProcess_SortByPType |
+                                             aiProcess_JoinIdenticalVertices |
+                                             aiProcess_OptimizeMeshes |
+                                             aiProcess_OptimizeGraph |
+                                             aiProcess_PreTransformVertices |
+                                             aiProcess_GenSmoothNormals
+                                             );
+
+    if (!scene) {
+        printf("import error: %s\n", importer.GetErrorString());
+        return 0;
+    }
+
+    printf("num meshes: %d\n\n", scene->mNumMeshes);
+
+    for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
+        aiMesh *aimesh = scene->mMeshes[i];
+        printf("  %s -\tverts: %d,\tfaces: %d,\tmat: %d,\thas colors: %d\n", aimesh->mName.C_Str(), aimesh->mNumVertices, aimesh->mNumFaces, aimesh->mMaterialIndex, aimesh->HasVertexColors(0));
+
+        Mesh::Ref mesh = do_load_mesh(aimesh);
+        if (!mesh)
+            continue;
+        return mesh;
+    }
+    return 0;
+}
+
+
+
+
+
+
+
+
+static void LoadTriangle() {
+    ship_mesh = load_mesh("../data/meshes/harv.ply");
+
+    ship_program = Program::create();
+    ship_program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/simple.vert"));
+    ship_program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/simple.frag"));
+    ship_program->attrib("in_pos", 0);
+    ship_program->attrib("in_normal", 1);
+    ship_program->link();
+    ship_program->detach_all();
+
+    qtree_program = Program::create();
+    qtree_program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/pos.vert"));
+    qtree_program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/color.frag"));
+    qtree_program->attrib("in_pos", 0);
+    qtree_program->link();
+    qtree_program->detach_all();
+}
+
+
+
+
+
+
+enum { ComponentType_Max = 1024 };
+typedef unsigned int ComponentType;
+
+template <class T>
+struct ComponentInfo {};
+
+#define DEFCOMPONENT(Type, ComT, SysT) \
+    template <> struct ComponentInfo<ComT> { \
+        static const char* name; \
+        enum { type = Type }; \
+        typedef class SysT System; \
+    }; \
+    const char* ComponentInfo<ComT>::name = #ComT;
+
+class Component {
+public:
+};
+
+class Entity;
+
+
+class BaseSystem {
+public:
+    virtual ~BaseSystem() {}
+
+    virtual const char *component_name() = 0;
+    virtual ComponentType component_type() = 0;
+
+    virtual Component *create_component() = 0;
+    virtual void destroy_component(Component *c) = 0;
+};
+
+
+
+
+template <class T>
+class System : public BaseSystem {
+public:
+    virtual const char *component_name() {
+        return ComponentInfo<T>::name;
+    }
+    virtual ComponentType component_type() {
+        return ComponentInfo<T>::type;
+    }
+
+    virtual Component *create_component() {
+        return create();
+    }
+
+    virtual void destroy_component(Component *c) {
+        destroy(static_cast<T *>(c));
+    }
+
+
+    template<typename ...Args>
+    T *create(Args&&... params) {
+        return component_pool.create(std::forward<Args>(params)...);
+    }
+
+    void destroy(T *c) {
+        component_pool.free(c);
+    }
+
+    virtual void init(T *c, Entity *e) {}
+
+    typedef typename IterablePool<T>::iterator iterator;
+    iterator begin() { return component_pool.begin(); }
+    iterator end() { return component_pool.end(); }
+
+private:
+    IterablePool<T> component_pool;
+};
+
+
+
+
+
+
+
+
+typedef unsigned int EntityID;
+
+enum { ComponentMaxFastType = 5 };
+
+struct ComponentLink {
+    ComponentType type;
+    Component *ptr;
+    ComponentLink *next;
+};
+
+class Entity {    
+public:
+    Entity(EntityID id) : _id(id), components(nullptr) {
+        memset(fast_components, 0, sizeof(fast_components));
+    }
+
+    ~Entity() {
+    }
+
+    EntityID id() {
+        return _id;
+    }
+
+    Component *get_component(ComponentType type) {
+        if (type <= ComponentMaxFastType)
+            return fast_components[type];
+
+        ComponentLink *com = components;
+        while (com) {
+            if (com->type == type)
+                return com->ptr;
+            com = com->next;
+        }
+        return nullptr;
+    }
+
+    template <class T>
+    T *get_component() {
+        return static_cast<T *>(get_component(ComponentInfo<T>::type));
+    }
+
+private:
+    friend class EntityManager;
+
+    EntityID _id;
+    Component *fast_components[ComponentMaxFastType + 1];
+    ComponentLink *components;
+};
+
+
+
+class EntityManager {
+public:
+    EntityManager() : last_id(0) {
+        memset(systems, 0, sizeof(systems));
+    }
+
+    Entity *create_entity() {
+        return entity_pool.create(++last_id);
+    }
+
+    void destroy_entity(Entity *e) {
+        for (int type = 0; type <= ComponentMaxFastType; ++type) {
+            if (e->fast_components[type])
+                get_system(type)->destroy_component(e->fast_components[type]);
+        }
+
+        ComponentLink *com = e->components;
+        while (com) {
+            get_system(com->type)->destroy_component(com->ptr);
+            link_pool.free(com);
+            com = com->next;
+        }
+
+        entity_pool.free(e);
+    }
+
+    typedef IterablePool<Entity>::iterator iterator;
+    iterator begin() { return entity_pool.begin(); }
+    iterator end() { return entity_pool.end(); }
+
+
+
+    void add_component(Entity *e, ComponentType type, Component *ptr) {
+        BaseSystem *system = get_system(type);
+
+        if (type <= ComponentMaxFastType) {
+            if (e->fast_components[type])
+                system->destroy_component(e->fast_components[type]);
+            e->fast_components[type] = ptr;
+            return;
+        }
+
+        ComponentLink *com = e->components;
+        while (com) {
+            if (com->type == type) {
+                system->destroy_component(com->ptr);
+                com->ptr = ptr;
+                return;
+            }
+            com = com->next;
+        }
+
+        com = link_pool.create();
+        com->type = type;
+        com->ptr = ptr;
+        com->next = e->components;
+        e->components = com;
+    }
+
+    template<class T, typename ...Args>
+    T *add_component(Entity *e, Args&&... params) {
+        auto system = get_system<T>();
+        T *c = system->create(std::forward<Args>(params)...);
+        add_component(e, ComponentInfo<T>::type, c);
+        return c;
+    }
+
+    void del_component(Entity *e, ComponentType type) {
+        if (type <= ComponentMaxFastType) {
+            if (e->fast_components[type]) {
+                get_system(type)->destroy_component(e->fast_components[type]);
+                e->fast_components[type] = nullptr;
+            }
+            return;
+        }
+
+        ComponentLink *prev = nullptr;
+        ComponentLink *com = e->components;
+        while (com) {
+            if (com->type == type) {
+                if (prev)
+                    prev->next = com->next;
+                else
+                    e->components = com->next;
+                get_system(type)->destroy_component(com->ptr);
+                link_pool.free(com);
+                return;
+            }
+            prev = com;
+            com = com->next;
+        }
+    }
+
+    template <class T>
+    void del_component(Entity *e) {
+        del_component(e, ComponentInfo<T>::type);
+    }
+
+
+
+
+    void register_system(BaseSystem *system) {
+        ComponentType type = system->component_type();
+        assert(type < ComponentType_Max);
+        assert(!systems[type]);
+        systems[type] = system;
+    }
+
+    BaseSystem *get_system(ComponentType type) {
+        assert(type < ComponentType_Max);
+        assert(systems[type]);
+        return systems[type];
+    }
+
+    template <class T>
+    typename ComponentInfo<T>::System *get_system() {
+        return static_cast<typename ComponentInfo<T>::System *>(get_system(ComponentInfo<T>::type));
+    }
+
+private:
+    EntityID last_id;
+    IterablePool<Entity> entity_pool;
+    Pool<ComponentLink> link_pool;
+    BaseSystem *systems[ComponentType_Max];
+};
+
+
+
+
+
+struct Position : public Component {
+    vec3 pos;
+};
+
+DEFCOMPONENT(0, Position, PositionSystem);
+
+class PositionSystem : public System<Position> {
+public:
+};
+
+
+
+static void teste() {
+    EntityManager mgr;
+    mgr.register_system(new PositionSystem);
+    mgr.get_system<Position>();
+
+    Entity *e = mgr.create_entity();
+
+    Position *p = mgr.add_component<Position>(e);
+
+    assert(e->get_component<Position>() == p);
+
+    mgr.del_component<Position>(e);
+
+    assert(e->get_component<Position>() == nullptr);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 class World;
 
 class Body : public QuadTree::Object {
@@ -88,11 +533,11 @@ public:
     typedef List<Body, &Body::world_link> BodyList;
 
     BodyList bodies;
+    EntityManager entity_manager;
     QuadTree quadtree;
     float dt;
 
-    World() : quadtree(Rect(-1000, -1000, 1000, 1000), 7) {
-    }
+    World() : quadtree(Rect(-1000, -1000, 1000, 1000), 7) {}
 
     ~World() {
         while (!bodies.empty())
@@ -150,14 +595,14 @@ public:
         //printf("context.neighbours: %d\n", context.neighbours.size());
 
         vec3 acc(0, 0, 0);
-        
+
         acc += separation(context) * 1.5f;
         acc += alignment(context) * 1.0f;
         acc += cohesion(context) * 1.0f;
-        
+
         acc += planehug(context) * 1.5f;
         acc += zseparation(context) * 1.5f;
-        
+
         acc += seek(cursor_pos) * 1.0f;
 
         vel += acc * world.dt;
@@ -165,7 +610,7 @@ public:
 
         pos += vel * world.dt;
         //pos.z = 0;
-        
+
         qtree_update();
 
         vec3 v = glm::normalize(vel);
@@ -358,107 +803,6 @@ void free_body(Body *b) {
 
 
 
-struct MeshFileHeader {
-    uint32_t fourcc;
-    uint32_t version;
-
-    uint32_t num_vertices;
-    uint32_t num_indices;
-
-    uint32_t have_normals;
-    uint32_t have_tangents;
-    uint32_t have_bitangents;
-    uint32_t num_texcoord_sets;
-    uint32_t num_color_sets;
-};
-
-
-
-#include <assimp/Importer.hpp>
-#include <assimp/scene.h>
-#include <assimp/postprocess.h>
-
-
-static Mesh::Ref do_load_mesh(aiMesh *aimesh) {
-    std::vector<GLfloat> verts;
-    std::vector<GLuint> indices;
-
-    assert(aimesh->HasPositions());
-    assert(aimesh->HasNormals());
-
-    for (unsigned int i = 0; i < aimesh->mNumVertices; ++i) {
-        aiVector3D v = aimesh->mVertices[i];
-        verts.push_back(v.x);
-        verts.push_back(v.y);
-        verts.push_back(v.z);
-
-        aiVector3D n = aimesh->mNormals[i];
-        verts.push_back(n.x);
-        verts.push_back(n.y);
-        verts.push_back(n.z);
-    }
-
-    for (unsigned int i = 0; i < aimesh->mNumFaces; ++i) {
-        aiFace f = aimesh->mFaces[i];
-        if (f.mNumIndices != 3)
-            return 0;
-        indices.push_back(f.mIndices[0]);
-        indices.push_back(f.mIndices[1]);
-        indices.push_back(f.mIndices[2]);
-    }
-
-    VertexFormat::Ref format = VertexFormat::create();
-    format->add(VertexFormat::Position, 0, 3, GL_FLOAT);
-    format->add(VertexFormat::Normal, 1, 3, GL_FLOAT);
-
-    BufferObject::Ref index_buffer = BufferObject::create();
-    index_buffer->bind();
-    index_buffer->data(sizeof(indices[0])*indices.size(), &indices[0]);
-    index_buffer->unbind();
-
-    BufferObject::Ref vertex_buffer = BufferObject::create();
-    vertex_buffer->bind();
-    vertex_buffer->data(sizeof(verts[0])*verts.size(), &verts[0]);
-    vertex_buffer->unbind();
-
-    Mesh::Ref mesh = Mesh::create(GL_TRIANGLES, 1);
-    mesh->set_vertex_buffer(0, vertex_buffer, format);
-    mesh->set_index_buffer(index_buffer, indices.size(), GL_UNSIGNED_INT);
-
-    return mesh;
-}
-
-Mesh::Ref load_mesh(const std::string &filename) {
-    Assimp::Importer importer;
-
-    const aiScene* scene = importer.ReadFile(filename,
-                                             aiProcess_Triangulate |
-                                             aiProcess_SortByPType |
-                                             aiProcess_JoinIdenticalVertices |
-                                             aiProcess_OptimizeMeshes |
-                                             aiProcess_OptimizeGraph |
-                                             aiProcess_PreTransformVertices |
-                                             aiProcess_GenSmoothNormals
-                                             );
-
-    if (!scene) {
-        printf("import error: %s\n", importer.GetErrorString());
-        return 0;
-    }
-
-    printf("num meshes: %d\n\n", scene->mNumMeshes);
-
-    for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
-        aiMesh *aimesh = scene->mMeshes[i];
-        printf("  %s -\tverts: %d,\tfaces: %d,\tmat: %d,\thas colors: %d\n", aimesh->mName.C_Str(), aimesh->mNumVertices, aimesh->mNumFaces, aimesh->mMaterialIndex, aimesh->HasVertexColors(0));
-
-        Mesh::Ref mesh = do_load_mesh(aimesh);
-        if (!mesh)
-            continue;
-        return mesh;
-    }
-    return 0;
-}
 
 
 
@@ -467,24 +811,11 @@ Mesh::Ref load_mesh(const std::string &filename) {
 
 
 
-static void LoadTriangle() {
-    ship_mesh = load_mesh("../data/meshes/harv.ply");
 
-    ship_program = Program::create();
-    ship_program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/simple.vert"));
-    ship_program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/simple.frag"));
-    ship_program->attrib("in_pos", 0);
-    ship_program->attrib("in_normal", 1);
-    ship_program->link();
-    ship_program->detach_all();
 
-    qtree_program = Program::create();
-    qtree_program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/pos.vert"));
-    qtree_program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/color.frag"));
-    qtree_program->attrib("in_pos", 0);
-    qtree_program->link();
-    qtree_program->detach_all();
-}
+
+
+
 
 
 
@@ -499,6 +830,7 @@ int main(int argc, char *argv[]) {
         freopen("CON", "w", stderr);
     }
 #endif
+    teste();
     printf("Starting...\n");
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
