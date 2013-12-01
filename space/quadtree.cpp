@@ -78,23 +78,18 @@ public:
         }
     }
 
-    void gather_outlines(std::vector<vec2> &lines) {
-        lines.push_back(vec2(rect.min.x, rect.min.y));
-        lines.push_back(vec2(rect.max.x, rect.min.y));
+    void gather_crosses(std::vector<vec2> &lines) {
+        if (!child[0])
+            return;
 
-        lines.push_back(vec2(rect.min.x, rect.min.y));
-        lines.push_back(vec2(rect.min.x, rect.max.y));
+        lines.push_back(child[2]->rect.min);
+        lines.push_back(child[1]->rect.max);
 
-        lines.push_back(vec2(rect.max.x, rect.max.y));
-        lines.push_back(vec2(rect.min.x, rect.max.y));
+        lines.push_back(child[1]->rect.min);
+        lines.push_back(child[2]->rect.max);
 
-        lines.push_back(vec2(rect.max.x, rect.max.y));
-        lines.push_back(vec2(rect.max.x, rect.min.y));
-
-        if (child[0]) {
-            for (int i = 0; i < 4; ++i)
-                child[i]->gather_outlines(lines);
-        }
+        for (int i = 0; i < 4; ++i)
+            child[i]->gather_crosses(lines);
     }
 };
 
@@ -231,7 +226,25 @@ void QuadTree::query(vec2 pos, float radius, std::vector<Object *> &result) {
 }
 
 void QuadTree::gather_outlines(std::vector<vec2> &lines) {
-    root->gather_outlines(lines);
+    Rect rect = root->rect;
+    
+    // generate the outside edges of the root:
+
+    lines.push_back(vec2(rect.min.x, rect.min.y));
+    lines.push_back(vec2(rect.max.x, rect.min.y));
+
+    lines.push_back(vec2(rect.min.x, rect.min.y));
+    lines.push_back(vec2(rect.min.x, rect.max.y));
+
+    lines.push_back(vec2(rect.max.x, rect.max.y));
+    lines.push_back(vec2(rect.min.x, rect.max.y));
+
+    lines.push_back(vec2(rect.max.x, rect.max.y));
+    lines.push_back(vec2(rect.max.x, rect.min.y));
+
+    // generate crosses (two lines splitting the four children)
+    // for all nodes that have children
+    root->gather_crosses(lines);
 }
 
 Node *QuadTree::new_node(Node *parent, Rect rect) {

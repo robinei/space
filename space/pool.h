@@ -164,9 +164,9 @@ public:
         obj->~T();
         Block *b = find_block(obj);
         b->freelist.push_back(obj);
-        char *alive = &b->livemap[obj - b->objects];
-        assert(*alive);
-        *alive = 0;
+        char &alive = b->livemap[obj - b->objects];
+        assert(alive);
+        alive = 0;
         if (!freelist_block)
             freelist_block = b;
     }
@@ -186,6 +186,7 @@ private:
                 obj = freelist_block->freelist_alloc();
                 if (obj)
                     return obj;
+                freelist_block = freelist_block->next;
             }
         }
 

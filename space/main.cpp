@@ -191,7 +191,7 @@ static void LoadTriangle() {
 
 
 
-enum { ComponentType_Max = 1024 };
+enum { ComponentType_Max = 128 };
 typedef unsigned int ComponentType;
 
 template <class T>
@@ -200,10 +200,12 @@ struct ComponentInfo {};
 #define DEFCOMPONENT(Type, ComT, SysT) \
     template <> struct ComponentInfo<ComT> { \
         static const char* name; \
+        static const char* system_name; \
         enum { type = Type }; \
         typedef class SysT System; \
     }; \
-    const char* ComponentInfo<ComT>::name = #ComT;
+    const char* ComponentInfo<ComT>::name = #ComT; \
+    const char* ComponentInfo<ComT>::system_name = #SysT;
 
 class Component {
 public:
@@ -216,9 +218,6 @@ class BaseSystem {
 public:
     virtual ~BaseSystem() {}
 
-    virtual const char *component_name() = 0;
-    virtual ComponentType component_type() = 0;
-
     virtual Component *create_component() = 0;
     virtual void destroy_component(Component *c) = 0;
 };
@@ -229,13 +228,6 @@ public:
 template <class T>
 class System : public BaseSystem {
 public:
-    virtual const char *component_name() {
-        return ComponentInfo<T>::name;
-    }
-    virtual ComponentType component_type() {
-        return ComponentInfo<T>::type;
-    }
-
     virtual Component *create_component() {
         return create();
     }
@@ -253,8 +245,6 @@ public:
     void destroy(T *c) {
         component_pool.free(c);
     }
-
-    virtual void init(T *c, Entity *e) {}
 
     typedef typename IterablePool<T>::iterator iterator;
     iterator begin() { return component_pool.begin(); }
@@ -423,11 +413,10 @@ public:
 
 
 
+    template <class T>
     void register_system(BaseSystem *system) {
-        ComponentType type = system->component_type();
-        assert(type < ComponentType_Max);
-        assert(!systems[type]);
-        systems[type] = system;
+        assert(!systems[ComponentInfo<T>::type]);
+        systems[ComponentInfo<T>::type] = system;
     }
 
     BaseSystem *get_system(ComponentType type) {
@@ -466,7 +455,7 @@ public:
 
 static void teste() {
     EntityManager mgr;
-    mgr.register_system(new PositionSystem);
+    mgr.register_system<Position>(new PositionSystem);
     mgr.get_system<Position>();
 
     Entity *e = mgr.create_entity();
