@@ -191,282 +191,214 @@ static void LoadTriangle() {
 
 
 
-enum { ComponentType_Max = 128 };
+
+
+
+
+
+
+
+
+
 typedef unsigned int ComponentType;
-
-template <class T>
-struct ComponentInfo {};
-
-#define DEFCOMPONENT(Type, ComT, SysT) \
-    template <> struct ComponentInfo<ComT> { \
-        static const char* name; \
-        static const char* system_name; \
-        enum { type = Type }; \
-        typedef class SysT System; \
-    }; \
-    const char* ComponentInfo<ComT>::name = #ComT; \
-    const char* ComponentInfo<ComT>::system_name = #SysT;
 
 class Component {
 public:
-};
-
-class Entity;
-
-
-class BaseSystem {
-public:
-    virtual ~BaseSystem() {}
-
-    virtual Component *create_component() = 0;
-    virtual void destroy_component(Component *c) = 0;
+    virtual ~Component() {}
+    virtual ComponentType type() = 0;
 };
 
 
+struct ComponentBlock {
+    enum {
+        BucketsBits = 3,
+        NumBuckets = 1 << BucketsBits,
+        ABits = 32 - BucketsBits
+    };
+
+    // random constant used in the universal hash function
+    // (http://en.wikipedia.org/wiki/Universal_hashing)
+    // we randomly generate this in order to make new hash functions until
+    // one is found which results in low max_probe (hopefully 0)
+    unsigned int hash_a : ABits;
+
+    // the longest probe needed to reach any value stored in this block
+    unsigned int max_probe : BucketsBits;
+
+    Component *buckets[NumBuckets];
+
+    ComponentBlock *next;
+
+    // rehash using randomly generated hash_a until satisfied with max_probe
+    void optimize();
+};
 
 
-template <class T>
-class System : public BaseSystem {
-public:
-    virtual Component *create_component() {
-        return create();
-    }
+// an entry alway starts with one component block, but more can be added
+// if more than ComponentBlock::Size components are added to the entry
+struct Entity {
+    ComponentBlock block;
 
-    virtual void destroy_component(Component *c) {
-        destroy(static_cast<T *>(c));
-    }
-
-
-    template<typename ...Args>
-    T *create(Args&&... params) {
-        return component_pool.create(std::forward<Args>(params)...);
-    }
-
-    void destroy(T *c) {
-        component_pool.free(c);
-    }
-
-    typedef typename IterablePool<T>::iterator iterator;
-    iterator begin() { return component_pool.begin(); }
-    iterator end() { return component_pool.end(); }
-
-private:
-    IterablePool<T> component_pool;
+    void insert(Component *c);
+    Component *lookup(ComponentType type);
+    void optimize();
 };
 
 
 
 
 
+void ComponentBlock::optimize() {
+    Component *result[NumBuckets];
 
+    // the current max_probe is the one to beat
+    unsigned int best_a = 0;
+    unsigned int best_max_p = max_probe;
 
+    // it has already been optimized (and no new components added since)
+    if (max_probe < NumBuckets)
+        return;
 
-typedef unsigned int EntityID;
+    for (int attempt = 0; attempt < 1000; ++attempt) {
+        memset(result, 0, sizeof(result));
 
-enum { ComponentMaxFastType = 5 };
+        // generate new random hash_a (which must be positive and odd)
+        unsigned int a = ((rand() & ((1 << ABits) - 1)) & ~(unsigned int)1) + 1;
+        unsigned int max_p = 0;
 
-struct ComponentLink {
-    ComponentType type;
-    Component *ptr;
-    ComponentLink *next;
-};
+        // try to insert the values using the new hash function while
+        // keeping record of the longest probe length encountered (max_p)
+        for (int i = 0; i < NumBuckets; ++i) {
+            Component *c = buckets[i];
+            if (!c)
+                continue;
+            
+            unsigned int h = (a * c->type()) >> ABits;
 
-class Entity {    
-public:
-    Entity(EntityID id) : _id(id), components(nullptr) {
-        memset(fast_components, 0, sizeof(fast_components));
-    }
+            // probe until we find a free slot
+            unsigned int p = 0;
+            do {
+                unsigned int j = (h + p) & (NumBuckets - 1);
+                if (!result[j]) {
+                    result[j] = c;
+                    break;
+                }
+            } while (++p < NumBuckets);
 
-    ~Entity() {
-    }
-
-    EntityID id() {
-        return _id;
-    }
-
-    Component *get_component(ComponentType type) {
-        if (type <= ComponentMaxFastType)
-            return fast_components[type];
-
-        ComponentLink *com = components;
-        while (com) {
-            if (com->type == type)
-                return com->ptr;
-            com = com->next;
-        }
-        return nullptr;
-    }
-
-    template <class T>
-    T *get_component() {
-        return static_cast<T *>(get_component(ComponentInfo<T>::type));
-    }
-
-private:
-    friend class EntityManager;
-
-    EntityID _id;
-    Component *fast_components[ComponentMaxFastType + 1];
-    ComponentLink *components;
-};
-
-
-
-class EntityManager {
-public:
-    EntityManager() : last_id(0) {
-        memset(systems, 0, sizeof(systems));
-    }
-
-    Entity *create_entity() {
-        return entity_pool.create(++last_id);
-    }
-
-    void destroy_entity(Entity *e) {
-        for (int type = 0; type <= ComponentMaxFastType; ++type) {
-            if (e->fast_components[type])
-                get_system(type)->destroy_component(e->fast_components[type]);
+            if (p > max_p)
+                max_p = p;
         }
 
-        ComponentLink *com = e->components;
-        while (com) {
-            get_system(com->type)->destroy_component(com->ptr);
-            link_pool.free(com);
-            com = com->next;
+        if (max_p < best_max_p) {
+            best_a = a;
+            best_max_p = max_p;
+            if (max_p == 0)
+                break; // perfect; no point looking any more
         }
-
-        entity_pool.free(e);
     }
 
-    typedef IterablePool<Entity>::iterator iterator;
-    iterator begin() { return entity_pool.begin(); }
-    iterator end() { return entity_pool.end(); }
+    if (best_max_p < max_probe) {
+        hash_a = best_a;
+        max_probe = best_max_p;
+        memcpy(buckets, result, sizeof(result));
+    }
+}
 
 
 
-    void add_component(Entity *e, ComponentType type, Component *ptr) {
-        BaseSystem *system = get_system(type);
-
-        if (type <= ComponentMaxFastType) {
-            if (e->fast_components[type])
-                system->destroy_component(e->fast_components[type]);
-            e->fast_components[type] = ptr;
-            return;
-        }
-
-        ComponentLink *com = e->components;
-        while (com) {
-            if (com->type == type) {
-                system->destroy_component(com->ptr);
-                com->ptr = ptr;
+void Entity::insert(Component *c) {
+    ComponentBlock *b = &block;
+    do {
+        for (int i = 0; i < ComponentBlock::NumBuckets; ++i) {
+            if (!b->buckets[i]) {
+                b->buckets[i] = c;
+                // we mess up any carefully optimized hash function...
+                // so optimize() is required again for best lookup speed
+                b->hash_a = 0;
+                b->max_probe = ComponentBlock::NumBuckets;
                 return;
             }
-            com = com->next;
         }
+        b = b->next;
+    } while (b);
+    assert(0);
+}
 
-        com = link_pool.create();
-        com->type = type;
-        com->ptr = ptr;
-        com->next = e->components;
-        e->components = com;
-    }
+Component *Entity::lookup(ComponentType type) {
+    ComponentBlock *b = &block;
+    do {
+        unsigned int h = (b->hash_a * type) >> ComponentBlock::ABits;
 
-    template<class T, typename ...Args>
-    T *add_component(Entity *e, Args&&... params) {
-        auto system = get_system<T>();
-        T *c = system->create(std::forward<Args>(params)...);
-        add_component(e, ComponentInfo<T>::type, c);
-        return c;
-    }
+        // probe from the hashed slot
+        unsigned int p = 0;
+        do {
+            unsigned int j = (h + p) & (ComponentBlock::NumBuckets - 1);
+            Component *c = b->buckets[j];
+            if (c && c->type() == type)
+                return c;
+        } while (++p < b->max_probe);
 
-    void del_component(Entity *e, ComponentType type) {
-        if (type <= ComponentMaxFastType) {
-            if (e->fast_components[type]) {
-                get_system(type)->destroy_component(e->fast_components[type]);
-                e->fast_components[type] = nullptr;
-            }
-            return;
-        }
+        // no match in this block, so we check the next (if any)
+        b = b->next;
+    } while (b);
+    
+    // it wasn't found in any of the blocks
+    return nullptr;
+}
 
-        ComponentLink *prev = nullptr;
-        ComponentLink *com = e->components;
-        while (com) {
-            if (com->type == type) {
-                if (prev)
-                    prev->next = com->next;
-                else
-                    e->components = com->next;
-                get_system(type)->destroy_component(com->ptr);
-                link_pool.free(com);
-                return;
-            }
-            prev = com;
-            com = com->next;
-        }
-    }
-
-    template <class T>
-    void del_component(Entity *e) {
-        del_component(e, ComponentInfo<T>::type);
-    }
+void Entity::optimize() {
+    ComponentBlock *b = &block;
+    do {
+        b->optimize();
+        b = b->next;
+    } while (b);
+}
 
 
 
 
-    template <class T>
-    void register_system(BaseSystem *system) {
-        assert(!systems[ComponentInfo<T>::type]);
-        systems[ComponentInfo<T>::type] = system;
-    }
 
-    BaseSystem *get_system(ComponentType type) {
-        assert(type < ComponentType_Max);
-        assert(systems[type]);
-        return systems[type];
-    }
+struct Chameleon : public Component {
+    ComponentType t;
 
-    template <class T>
-    typename ComponentInfo<T>::System *get_system() {
-        return static_cast<typename ComponentInfo<T>::System *>(get_system(ComponentInfo<T>::type));
-    }
+    Chameleon(ComponentType t) : t(t) {}
 
-private:
-    EntityID last_id;
-    IterablePool<Entity> entity_pool;
-    Pool<ComponentLink> link_pool;
-    BaseSystem *systems[ComponentType_Max];
+    ComponentType type() override { return t; }
 };
 
-
-
-
-
-struct Position : public Component {
-    vec3 pos;
-};
-
-DEFCOMPONENT(0, Position, PositionSystem);
-
-class PositionSystem : public System<Position> {
-public:
-};
-
-
+static const char *fourcc_str(unsigned int fourcc) {
+    static char str[5];
+    str[0] = (fourcc >> 24) & 0xff; if (str[0] == 0) str[0] = ' ';
+    str[1] = (fourcc >> 16) & 0xff; if (str[1] == 0) str[1] = ' ';
+    str[2] = (fourcc >> 8) & 0xff; if (str[2] == 0) str[2] = ' ';
+    str[3] = fourcc & 0xff; if (str[3] == 0) str[3] = ' ';
+    str[4] = 0;
+    return str;
+}
 
 static void teste() {
-    EntityManager mgr;
-    mgr.register_system<Position>(new PositionSystem);
-    mgr.get_system<Position>();
+    Chameleon pos('POS');
+    Chameleon vel('VEL');
+    Chameleon ship('SHIP');
+    Chameleon anim('ANIM');
 
-    Entity *e = mgr.create_entity();
+    Entity e = { 0, };
 
-    Position *p = mgr.add_component<Position>(e);
+    e.insert(&pos);
+    e.insert(&vel);
+    e.insert(&ship);
+    e.insert(&anim);
 
-    assert(e->get_component<Position>() == p);
+    e.optimize();
 
-    mgr.del_component<Position>(e);
-
-    assert(e->get_component<Position>() == nullptr);
+    printf("max_probe: %d\n", e.block.max_probe);
+    for (int i = 0; i < ComponentBlock::NumBuckets; ++i) {
+        Component *c = e.block.buckets[i];
+        if (!c)
+            printf("name: null\n");
+        else
+            printf("name: %s\n", fourcc_str(c->type()));
+    }
 }
 
 
@@ -522,7 +454,6 @@ public:
     typedef List<Body, &Body::world_link> BodyList;
 
     BodyList bodies;
-    EntityManager entity_manager;
     QuadTree quadtree;
     float dt;
 
@@ -820,6 +751,7 @@ int main(int argc, char *argv[]) {
     }
 #endif
     teste();
+    return 0;
     printf("Starting...\n");
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
