@@ -219,10 +219,7 @@ struct FixedHashTable {
     T buckets[NumBuckets];
 
 
-    FixedHashTable() :
-        hash_a(1870964089), // chosen by a fair dice roll (must be positive and odd)
-        max_probe(0)
-    {
+    FixedHashTable(unsigned int hash_a = 1870964089) : hash_a(hash_a), max_probe(0) {
         for (int i = 0; i < NumBuckets; ++i)
             buckets[i] = T();
     }
@@ -263,63 +260,32 @@ struct FixedHashTable {
     // rehash using randomly generated hash_a until satisfied with max_probe
     template <class RandFunc>
     void optimize(RandFunc &rnd, int max_attempts=1000) {
-        T best_buckets[NumBuckets];
-        T temp_buckets[NumBuckets];
-
         if (max_probe == 0)
             return; // already optimal
 
-        // the current max_probe is the one to beat
-        unsigned int best_a = 0;
-        unsigned int best_max_p = max_probe;
+        FixedHashTable best(*this);
 
         for (int attempt = 0; attempt < max_attempts; ++attempt) {
-            for (int i = 0; i < NumBuckets; ++i)
-                temp_buckets[i] = T();
-
             // generate new random hash_a (which must be positive and odd)
             unsigned int a = ((rnd() & ((1 << LowBits) - 1)) & ~(unsigned int)1) + 1;
-            unsigned int max_p = 0;
+            FixedHashTable temp(a);
 
-            // try to insert the values using the new hash function while
-            // keeping record of the longest probe length encountered (max_p)
             for (int i = 0; i < NumBuckets; ++i) {
                 T val = buckets[i];
                 if (val == T())
                     continue;
-
-                unsigned int h = (a * KeyFunc::key(val)) >> LowBits;
-
-                // probe until we find a free slot
-                unsigned int p = 0;
-                do {
-                    unsigned int j = (h + p) & (NumBuckets - 1);
-                    if (temp_buckets[j] == T()) {
-                        temp_buckets[j] = val;
-                        break;
-                    }
-                } while (++p < NumBuckets);
-
-                if (p > max_p)
-                    max_p = p;
+                temp.insert(val);
             }
 
-            if (max_p < best_max_p) {
-                best_a = a;
-                best_max_p = max_p;
-                for (int i = 0; i < NumBuckets; ++i)
-                    best_buckets[i] = temp_buckets[i];
-                if (max_p == 0)
+            if (temp.max_probe < best.max_probe) {
+                best = temp;
+                if (temp.max_probe == 0)
                     break; // perfect; no point looking any more
             }
         }
 
-        if (best_max_p < max_probe) {
-            hash_a = best_a;
-            max_probe = best_max_p;
-            for (int i = 0; i < NumBuckets; ++i)
-                buckets[i] = best_buckets[i];
-        }
+        if (best.max_probe < max_probe)
+            *this = best;
     }
 };
 
