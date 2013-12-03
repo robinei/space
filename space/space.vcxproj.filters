@@ -33,6 +33,9 @@
     <ClCompile Include="renderqueue.cpp">
       <Filter>render</Filter>
     </ClCompile>
+    <ClCompile Include="mtrand.cpp">
+      <Filter>common</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="program.h">
@@ -78,6 +81,9 @@
       <Filter>render</Filter>
     </ClInclude>
     <ClInclude Include="pool.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="mtrand.h">
       <Filter>common</Filter>
     </ClInclude>
   </ItemGroup>

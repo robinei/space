@@ -85,6 +85,7 @@
     <ClCompile Include="bufferobject.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="mesh.cpp" />
+    <ClCompile Include="mtrand.cpp" />
     <ClCompile Include="program.cpp" />
     <ClCompile Include="quadtree.cpp" />
     <ClCompile Include="renderqueue.cpp" />
@@ -98,6 +99,7 @@
     <ClInclude Include="list.h" />
     <ClInclude Include="listlink.h" />
     <ClInclude Include="mesh.h" />
+    <ClInclude Include="mtrand.h" />
     <ClInclude Include="mymath.h" />
     <ClInclude Include="opengl.h" />
     <ClInclude Include="pool.h" />

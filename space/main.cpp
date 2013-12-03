@@ -22,6 +22,7 @@
 #include "fpscamera.h"
 #include "quadtree.h"
 #include "renderqueue.h"
+#include "mtrand.h"
 
 #define STBI_HEADER_FILE_ONLY
 #include "stb_image.c"
@@ -193,6 +194,131 @@ static void LoadTriangle() {
 
 
 
+
+
+template <int BucketsBits, typename T, class KeyFunc=T>
+struct FixedHashTable {
+    enum {
+        HighBits = BucketsBits,
+        LowBits = 32 - HighBits,
+        NumBuckets = 1 << HighBits
+    };
+
+    typedef unsigned int KeyType;
+
+
+    // random constant used in the universal hash function
+    // (http://en.wikipedia.org/wiki/Universal_hashing)
+    // we randomly generate this in order to make new hash functions until
+    // one is found which results in low max_probe (hopefully 0)
+    unsigned int hash_a : LowBits;
+
+    // the longest probe needed to reach any value stored in this block
+    unsigned int max_probe : HighBits;
+
+    T buckets[NumBuckets];
+
+
+    FixedHashTable() :
+        hash_a(1870964089), // chosen by a fair dice roll (must be positive and odd)
+        max_probe(0)
+    {
+        for (int i = 0; i < NumBuckets; ++i)
+            buckets[i] = T();
+    }
+
+    bool insert(T val) {
+        unsigned int h = (hash_a * KeyFunc::key(val)) >> LowBits;
+
+        // probe for a free slot
+        unsigned int p = 0;
+        do {
+            unsigned int j = (h + p) & (NumBuckets - 1);
+            if (buckets[j] == T()) {
+                buckets[j] = val;
+                if (p > max_probe)
+                    max_probe = p; // this probe was the longest yet
+                return true;
+            }
+        } while (++p < NumBuckets);
+
+        return false;
+    }
+    
+    T lookup(KeyType key) {
+        unsigned int h = (hash_a * key) >> LowBits;
+
+        // probe from the hashed slot
+        unsigned int p = 0;
+        do {
+            unsigned int j = (h + p) & (NumBuckets - 1);
+            T val(buckets[j]);
+            if (val != T() && KeyFunc::key(val) == key)
+                return val;
+        } while (++p <= max_probe);
+
+        return T();
+    }
+
+    // rehash using randomly generated hash_a until satisfied with max_probe
+    template <class RandFunc>
+    void optimize(RandFunc &rnd, int max_attempts=1000) {
+        T result[NumBuckets];
+
+        if (max_probe == 0)
+            return; // already optimal
+
+        // the current max_probe is the one to beat
+        unsigned int best_a = 0;
+        unsigned int best_max_p = max_probe;
+
+        for (int attempt = 0; attempt < max_attempts; ++attempt) {
+            for (int i = 0; i < NumBuckets; ++i)
+                result[i] = T();
+
+            // generate new random hash_a (which must be positive and odd)
+            unsigned int a = ((rnd() & ((1 << LowBits) - 1)) & ~(unsigned int)1) + 1;
+            unsigned int max_p = 0;
+
+            // try to insert the values using the new hash function while
+            // keeping record of the longest probe length encountered (max_p)
+            for (int i = 0; i < NumBuckets; ++i) {
+                T val = buckets[i];
+                if (val == T())
+                    continue;
+
+                unsigned int h = (a * KeyFunc::key(val)) >> LowBits;
+
+                // probe until we find a free slot
+                unsigned int p = 0;
+                do {
+                    unsigned int j = (h + p) & (NumBuckets - 1);
+                    if (result[j] == T()) {
+                        result[j] = val;
+                        break;
+                    }
+                } while (++p < NumBuckets);
+
+                if (p > max_p)
+                    max_p = p;
+            }
+
+            if (max_p < best_max_p) {
+                best_a = a;
+                best_max_p = max_p;
+                if (max_p == 0)
+                    break; // perfect; no point looking any more
+            }
+        }
+
+        if (best_max_p < max_probe) {
+            hash_a = best_a;
+            max_probe = best_max_p;
+            for (int i = 0; i < NumBuckets; ++i)
+                buckets[i] = result[i];
+        }
+    }
+};
 
 
 
@@ -402,7 +528,62 @@ struct Chameleon : public Component {
     ComponentType type() override { return t; }
 };
 
+
+struct IntKey {
+    static unsigned int key(int x) {
+        return (unsigned long)x;
+    }
+};
+
+typedef FixedHashTable<10, int, IntKey> IntTable;
+
+typedef void *Ptr;
+static int rand_count = 0;
+static MTRand_int32 mtrand;
+
+struct Rand {
+    unsigned long operator()() {
+        ++rand_count;
+        return mtrand();
+    }
+};
+
 static void teste() {
+    assert(0 == int());
+    assert(1 != int());
+    assert(nullptr == Ptr());
+
+    IntTable table;
+
+    /*assert(table.insert(10));
+    assert(table.insert(3));
+    assert(table.insert(60));
+    assert(table.insert(85));
+    assert(table.insert(49));
+    assert(table.insert(36));
+    assert(table.insert(305));
+    table.optimize(Rand());
+    printf("rand_count: %d\n", rand_count);
+    printf("max_probe: %d\n", table.max_probe);
+    printf("%d\n", table.lookup(10));
+    printf("%d\n", table.lookup(3));
+    printf("%d\n", table.lookup(11));*/
+
+    for (int i = 0; i < 512; ++i)
+        assert(table.insert(mtrand()));
+
+    printf("max_probe0: %d\n", table.max_probe);
+    table.optimize(Rand());
+    printf("rand_count: %d\n", rand_count);
+    printf("max_probe: %d\n", table.max_probe);
+
+    return;
+    for (int i = 0; i < 1000; ++i)
+        rand();
+
+
+
+
     Chameleon pos('POS');
     Chameleon vel('VEL');
     Chameleon ship('SHIP');
@@ -434,7 +615,7 @@ static void teste() {
             printf("name: %s\n", fourcc_str(c->type()));
     }
 
-    assert(e.lookup('POS')->type() == 'POS');
+    assert(e.lookup('POS') && e.lookup('POS')->type() == 'POS');
     assert(e.lookup('VEL')->type() == 'VEL');
     assert(e.lookup('SHIP')->type() == 'SHIP');
     assert(e.lookup('ANIM')->type() == 'ANIM');
