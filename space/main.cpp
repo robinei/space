@@ -263,7 +263,8 @@ struct FixedHashTable {
     // rehash using randomly generated hash_a until satisfied with max_probe
     template <class RandFunc>
     void optimize(RandFunc &rnd, int max_attempts=1000) {
-        T result[NumBuckets];
+        T best_buckets[NumBuckets];
+        T temp_buckets[NumBuckets];
 
         if (max_probe == 0)
             return; // already optimal
@@ -274,7 +275,7 @@ struct FixedHashTable {
 
         for (int attempt = 0; attempt < max_attempts; ++attempt) {
             for (int i = 0; i < NumBuckets; ++i)
-                result[i] = T();
+                temp_buckets[i] = T();
 
             // generate new random hash_a (which must be positive and odd)
             unsigned int a = ((rnd() & ((1 << LowBits) - 1)) & ~(unsigned int)1) + 1;
@@ -293,8 +294,8 @@ struct FixedHashTable {
                 unsigned int p = 0;
                 do {
                     unsigned int j = (h + p) & (NumBuckets - 1);
-                    if (result[j] == T()) {
-                        result[j] = val;
+                    if (temp_buckets[j] == T()) {
+                        temp_buckets[j] = val;
                         break;
                     }
                 } while (++p < NumBuckets);
@@ -306,6 +307,8 @@ struct FixedHashTable {
             if (max_p < best_max_p) {
                 best_a = a;
                 best_max_p = max_p;
+                for (int i = 0; i < NumBuckets; ++i)
+                    best_buckets[i] = temp_buckets[i];
                 if (max_p == 0)
                     break; // perfect; no point looking any more
             }
@@ -315,7 +318,7 @@ struct FixedHashTable {
             hash_a = best_a;
             max_probe = best_max_p;
             for (int i = 0; i < NumBuckets; ++i)
-                buckets[i] = result[i];
+                buckets[i] = best_buckets[i];
         }
     }
 };
@@ -324,6 +327,17 @@ struct FixedHashTable {
 
 
 
+
+
+static const char *fourcc_str(unsigned int fourcc) {
+    char *str = (char *)malloc(5);
+    str[0] = (fourcc >> 24) & 0xff; if (str[0] == 0) str[0] = ' ';
+    str[1] = (fourcc >> 16) & 0xff; if (str[1] == 0) str[1] = ' ';
+    str[2] = (fourcc >> 8) & 0xff; if (str[2] == 0) str[2] = ' ';
+    str[3] = fourcc & 0xff; if (str[3] == 0) str[3] = ' ';
+    str[4] = 0;
+    return str;
+}
 
 
 typedef unsigned int ComponentType;
@@ -393,7 +407,8 @@ ComponentBlock::ComponentBlock() : max_probe(0), next(nullptr)
 }
 
 void ComponentBlock::optimize() {
-    Component *result[NumBuckets];
+    Component *best_blocks[NumBuckets];
+    Component *temp[NumBuckets];
 
     if (max_probe == 0)
         return; // already optimal
@@ -403,12 +418,13 @@ void ComponentBlock::optimize() {
     unsigned int best_max_p = max_probe;
 
     for (int attempt = 0; attempt < 1000; ++attempt) {
-        memset(result, 0, sizeof(result));
+        memset(temp, 0, sizeof(temp));
 
         // generate new random hash_a (which must be positive and odd)
         unsigned int a = gen_hash_a();
         unsigned int max_p = 0;
 
+        //puts("--");
         // try to insert the values using the new hash function while
         // keeping record of the longest probe length encountered (max_p)
         for (int i = 0; i < NumBuckets; ++i) {
@@ -422,8 +438,10 @@ void ComponentBlock::optimize() {
             unsigned int p = 0;
             do {
                 unsigned int j = (h + p) & (NumBuckets - 1);
-                if (!result[j]) {
-                    result[j] = c;
+
+                //printf("reinsert: %d -> %s\n", j, fourcc_str(c->type()));
+                if (!temp[j]) {
+                    temp[j] = c;
                     break;
                 }
             } while (++p < NumBuckets);
@@ -435,15 +453,24 @@ void ComponentBlock::optimize() {
         if (max_p < best_max_p) {
             best_a = a;
             best_max_p = max_p;
+            memcpy(best_blocks, temp, sizeof(temp));
             if (max_p == 0)
                 break; // perfect; no point looking any more
         }
     }
 
     if (best_max_p < max_probe) {
+        unsigned int h0 = (hash_a * (unsigned int)'POS') >> LowBits;
+        unsigned int h1 = (best_a * (unsigned int)'POS') >> LowBits;
+
+        unsigned int j0 = (h0 + 0) & (NumBuckets - 1);
+        unsigned int j1 = (h1 + 0) & (NumBuckets - 1);
+        //printf("j0: %d\n", j0);
+        //printf("j1: %d\n", j1);
+
         hash_a = best_a;
         max_probe = best_max_p;
-        memcpy(buckets, result, sizeof(result));
+        memcpy(buckets, best_blocks, sizeof(best_blocks));
     }
 }
 
@@ -486,6 +513,10 @@ Component *Entity::lookup(ComponentType type) {
         do {
             unsigned int j = (h + p) & (ComponentBlock::NumBuckets - 1);
             Component *c = b->buckets[j];
+            if (!c)
+                printf("lookup: %d -> null\n", j);
+            else
+                printf("lookup: %d -> %s\n", j, fourcc_str(c->type()));
             if (c && c->type() == type)
                 return c;
         } while (++p <= b->max_probe);
@@ -510,15 +541,6 @@ void Entity::optimize() {
 
 
 
-static const char *fourcc_str(unsigned int fourcc) {
-    static char str[5];
-    str[0] = (fourcc >> 24) & 0xff; if (str[0] == 0) str[0] = ' ';
-    str[1] = (fourcc >> 16) & 0xff; if (str[1] == 0) str[1] = ' ';
-    str[2] = (fourcc >> 8) & 0xff; if (str[2] == 0) str[2] = ' ';
-    str[3] = fourcc & 0xff; if (str[3] == 0) str[3] = ' ';
-    str[4] = 0;
-    return str;
-}
 
 struct Chameleon : public Component {
     ComponentType t;
@@ -577,7 +599,7 @@ static void teste() {
     printf("rand_count: %d\n", rand_count);
     printf("max_probe: %d\n", table.max_probe);
 
-    return;
+    //return;
     for (int i = 0; i < 1000; ++i)
         rand();
 
@@ -603,6 +625,7 @@ static void teste() {
     e.insert(&body);
     e.insert(&gfx);
     e.insert(&snd);
+    assert(e.lookup('POS') && e.lookup('POS')->type() == 'POS');
 
     e.optimize();
 
