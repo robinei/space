@@ -209,33 +209,43 @@ public:
 };
 
 
+// we store component refs in an associative container that has the structure
+// of a linked list of fixed size hash tables using open addressing scheme.
+// we use universal hashing to ensure that most components fall into the exact
+// bucket that their type hashes to, meaning that probe lengths are usually 0.
+// chained blocks are independent, so lookup operations must try all blocks
+// until they find the type they are looking for, or fail.
+// HighBits should be set so that only one or two blocks are needed per entity.
 struct ComponentBlock {
     enum {
-        BucketsBits = 3,
-        NumBuckets = 1 << BucketsBits,
-        ABits = 32 - BucketsBits
+        HighBits = 3, // set to 4 for 16 buckets etc.
+        LowBits = 32 - HighBits,
+        NumBuckets = 1 << HighBits
     };
 
     // random constant used in the universal hash function
     // (http://en.wikipedia.org/wiki/Universal_hashing)
     // we randomly generate this in order to make new hash functions until
     // one is found which results in low max_probe (hopefully 0)
-    unsigned int hash_a : ABits;
+    unsigned int hash_a : LowBits;
 
     // the longest probe needed to reach any value stored in this block
-    unsigned int max_probe : BucketsBits;
+    unsigned int max_probe : HighBits;
 
     Component *buckets[NumBuckets];
 
+    // if the buckets overflow, we allocate a new block.
     ComponentBlock *next;
+
+
+    ComponentBlock();
 
     // rehash using randomly generated hash_a until satisfied with max_probe
     void optimize();
 };
 
 
-// an entry alway starts with one component block, but more can be added
-// if more than ComponentBlock::Size components are added to the entry
+// an entry alway starts with one embedded component block
 struct Entity {
     ComponentBlock block;
 
@@ -246,24 +256,31 @@ struct Entity {
 
 
 
+static inline unsigned int gen_hash_a() {
+    return ((rand() & ((1 << ComponentBlock::LowBits) - 1)) & ~(unsigned int)1) + 1;
+}
 
+ComponentBlock::ComponentBlock() : max_probe(0), next(nullptr)
+{
+    hash_a = gen_hash_a();
+    memset(buckets, 0, sizeof(buckets));
+}
 
 void ComponentBlock::optimize() {
     Component *result[NumBuckets];
+
+    if (max_probe == 0)
+        return; // already optimal
 
     // the current max_probe is the one to beat
     unsigned int best_a = 0;
     unsigned int best_max_p = max_probe;
 
-    // it has already been optimized (and no new components added since)
-    if (max_probe < NumBuckets)
-        return;
-
     for (int attempt = 0; attempt < 1000; ++attempt) {
         memset(result, 0, sizeof(result));
 
         // generate new random hash_a (which must be positive and odd)
-        unsigned int a = ((rand() & ((1 << ABits) - 1)) & ~(unsigned int)1) + 1;
+        unsigned int a = gen_hash_a();
         unsigned int max_p = 0;
 
         // try to insert the values using the new hash function while
@@ -273,7 +290,7 @@ void ComponentBlock::optimize() {
             if (!c)
                 continue;
             
-            unsigned int h = (a * c->type()) >> ABits;
+            unsigned int h = (a * c->type()) >> LowBits;
 
             // probe until we find a free slot
             unsigned int p = 0;
@@ -305,29 +322,38 @@ void ComponentBlock::optimize() {
 }
 
 
-
 void Entity::insert(Component *c) {
     ComponentBlock *b = &block;
+    ComponentType type = c->type();
+    
     do {
-        for (int i = 0; i < ComponentBlock::NumBuckets; ++i) {
-            if (!b->buckets[i]) {
-                b->buckets[i] = c;
-                // we mess up any carefully optimized hash function...
-                // so optimize() is required again for best lookup speed
-                b->hash_a = 0;
-                b->max_probe = ComponentBlock::NumBuckets;
+        unsigned int h = (b->hash_a * type) >> ComponentBlock::LowBits;
+
+        // probe for a free slot
+        unsigned int p = 0;
+        do {
+            unsigned int j = (h + p) & (ComponentBlock::NumBuckets - 1);
+            if (!b->buckets[j]) {
+                b->buckets[j] = c;
+                if (p > b->max_probe)
+                    b->max_probe = p; // this probe was the longest yet
                 return;
             }
-        }
+        } while (++p < ComponentBlock::NumBuckets);
+
+        // no free slots; try the next block
         b = b->next;
     } while (b);
+    
     assert(0);
+    // TODO: add new block
 }
 
 Component *Entity::lookup(ComponentType type) {
     ComponentBlock *b = &block;
+    
     do {
-        unsigned int h = (b->hash_a * type) >> ComponentBlock::ABits;
+        unsigned int h = (b->hash_a * type) >> ComponentBlock::LowBits;
 
         // probe from the hashed slot
         unsigned int p = 0;
@@ -336,7 +362,7 @@ Component *Entity::lookup(ComponentType type) {
             Component *c = b->buckets[j];
             if (c && c->type() == type)
                 return c;
-        } while (++p < b->max_probe);
+        } while (++p <= b->max_probe);
 
         // no match in this block, so we check the next (if any)
         b = b->next;
@@ -358,14 +384,6 @@ void Entity::optimize() {
 
 
 
-struct Chameleon : public Component {
-    ComponentType t;
-
-    Chameleon(ComponentType t) : t(t) {}
-
-    ComponentType type() override { return t; }
-};
-
 static const char *fourcc_str(unsigned int fourcc) {
     static char str[5];
     str[0] = (fourcc >> 24) & 0xff; if (str[0] == 0) str[0] = ' ';
@@ -376,18 +394,34 @@ static const char *fourcc_str(unsigned int fourcc) {
     return str;
 }
 
+struct Chameleon : public Component {
+    ComponentType t;
+
+    Chameleon(ComponentType t) : t(t) {}
+
+    ComponentType type() override { return t; }
+};
+
 static void teste() {
     Chameleon pos('POS');
     Chameleon vel('VEL');
     Chameleon ship('SHIP');
     Chameleon anim('ANIM');
+    Chameleon boid('BOID');
+    Chameleon body('BODY');
+    Chameleon gfx('GFX');
+    Chameleon snd('SND');
 
-    Entity e = { 0, };
+    Entity e;
 
     e.insert(&pos);
     e.insert(&vel);
     e.insert(&ship);
     e.insert(&anim);
+    e.insert(&boid);
+    e.insert(&body);
+    e.insert(&gfx);
+    e.insert(&snd);
 
     e.optimize();
 
@@ -399,6 +433,12 @@ static void teste() {
         else
             printf("name: %s\n", fourcc_str(c->type()));
     }
+
+    assert(e.lookup('POS')->type() == 'POS');
+    assert(e.lookup('VEL')->type() == 'VEL');
+    assert(e.lookup('SHIP')->type() == 'SHIP');
+    assert(e.lookup('ANIM')->type() == 'ANIM');
+    assert(!e.lookup('NOPE'));
 }
 
 
