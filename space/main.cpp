@@ -23,6 +23,7 @@
 #include "quadtree.h"
 #include "renderqueue.h"
 #include "mtrand.h"
+#include "fixedhashtable.h"
 
 #define STBI_HEADER_FILE_ONLY
 #include "stb_image.c"
@@ -196,123 +197,29 @@ static void LoadTriangle() {
 
 
 
-template <int BucketsBits, typename T, class KeyFunc=T>
-struct FixedHashTable {
-    enum {
-        HighBits = BucketsBits,
-        LowBits = 32 - HighBits,
-        NumBuckets = 1 << HighBits
-    };
-
-    typedef unsigned int KeyType;
-
-
-    // random constant used in the universal hash function
-    // (http://en.wikipedia.org/wiki/Universal_hashing)
-    // we randomly generate this in order to make new hash functions until
-    // one is found which results in low max_probe (hopefully 0)
-    unsigned int hash_a : LowBits;
-
-    // the longest probe needed to reach any value stored in this block
-    unsigned int max_probe : HighBits;
-
-    T buckets[NumBuckets];
-
-
-    FixedHashTable(unsigned int hash_a = 1870964089) : hash_a(hash_a), max_probe(0) {
-        for (int i = 0; i < NumBuckets; ++i)
-            buckets[i] = T();
-    }
-
-    bool insert(T val) {
-        unsigned int h = (hash_a * KeyFunc::key(val)) >> LowBits;
-
-        // probe for a free slot
-        unsigned int p = 0;
-        do {
-            unsigned int j = (h + p) & (NumBuckets - 1);
-            if (buckets[j] == T()) {
-                buckets[j] = val;
-                if (p > max_probe)
-                    max_probe = p; // this probe was the longest yet
-                return true;
-            }
-        } while (++p < NumBuckets);
-
-        return false;
-    }
-    
-    T lookup(KeyType key) {
-        unsigned int h = (hash_a * key) >> LowBits;
-
-        // probe from the hashed slot
-        unsigned int p = 0;
-        do {
-            unsigned int j = (h + p) & (NumBuckets - 1);
-            T val(buckets[j]);
-            if (val != T() && KeyFunc::key(val) == key)
-                return val;
-        } while (++p <= max_probe);
-
-        return T();
-    }
-
-    // rehash using randomly generated hash_a until satisfied with max_probe
-    template <class RandFunc>
-    void optimize(RandFunc &rnd, int max_attempts=1000) {
-        if (max_probe == 0)
-            return; // already optimal
-
-        FixedHashTable best(*this);
-
-        for (int attempt = 0; attempt < max_attempts; ++attempt) {
-            // generate new random hash_a (which must be positive and odd)
-            unsigned int a = ((rnd() & ((1 << LowBits) - 1)) & ~(unsigned int)1) + 1;
-            FixedHashTable temp(a);
-
-            for (int i = 0; i < NumBuckets; ++i) {
-                T val = buckets[i];
-                if (val == T())
-                    continue;
-                temp.insert(val);
-            }
-
-            if (temp.max_probe < best.max_probe) {
-                best = temp;
-                if (temp.max_probe == 0)
-                    break; // perfect; no point looking any more
-            }
-        }
-
-        if (best.max_probe < max_probe)
-            *this = best;
-    }
-};
 
 
 
-
-
-
-
-static const char *fourcc_str(unsigned int fourcc) {
-    char *str = (char *)malloc(5);
-    str[0] = (fourcc >> 24) & 0xff; if (str[0] == 0) str[0] = ' ';
-    str[1] = (fourcc >> 16) & 0xff; if (str[1] == 0) str[1] = ' ';
-    str[2] = (fourcc >> 8) & 0xff; if (str[2] == 0) str[2] = ' ';
-    str[3] = fourcc & 0xff; if (str[3] == 0) str[3] = ' ';
-    str[4] = 0;
-    return str;
-}
-
+class EntityManager;
 
 typedef unsigned int ComponentType;
 
 class Component {
 public:
     virtual ~Component() {}
+
     virtual ComponentType type() = 0;
+
+    virtual void destroy(EntityManager *m) = 0;
 };
+
+
+struct ComponentHashKey {
+    static unsigned int key(Component *c) {
+        return c->type();
+    }
+};
+typedef FixedHashTable<3, Component *, ComponentHashKey> ComponentTable;
 
 
 // we store component refs in an associative container that has the structure
@@ -321,205 +228,152 @@ public:
 // bucket that their type hashes to, meaning that probe lengths are usually 0.
 // chained blocks are independent, so lookup operations must try all blocks
 // until they find the type they are looking for, or fail.
-// HighBits should be set so that only one or two blocks are needed per entity.
+// table size should be set so that only one or two blocks are needed per entity.
 struct ComponentBlock {
-    enum {
-        HighBits = 3, // set to 4 for 16 buckets etc.
-        LowBits = 32 - HighBits,
-        NumBuckets = 1 << HighBits
-    };
+    ComponentTable table;
 
-    // random constant used in the universal hash function
-    // (http://en.wikipedia.org/wiki/Universal_hashing)
-    // we randomly generate this in order to make new hash functions until
-    // one is found which results in low max_probe (hopefully 0)
-    unsigned int hash_a : LowBits;
-
-    // the longest probe needed to reach any value stored in this block
-    unsigned int max_probe : HighBits;
-
-    Component *buckets[NumBuckets];
-
-    // if the buckets overflow, we allocate a new block.
+    // if the table overflows, we allocate a new block.
     ComponentBlock *next;
 
-
-    ComponentBlock();
-
-    // rehash using randomly generated hash_a until satisfied with max_probe
-    void optimize();
+    ComponentBlock(ComponentBlock *next = nullptr) : next(next) {}
 };
 
 
-// an entry alway starts with one embedded component block
-struct Entity {
+class Entity {
+    friend class EntityManager;
+
+    // an entity alway has one embedded component block
     ComponentBlock block;
 
-    void insert(Component *c);
-    Component *lookup(ComponentType type);
-    void optimize();
+public:
+    Component *get_component(ComponentType type);
+
+    template <class T>
+    T *get_component() {
+        return static_cast<T *>(get_component(T::TYPE));
+    }
 };
 
 
 
-static inline unsigned int gen_hash_a() {
-    return ((rand() & ((1 << ComponentBlock::LowBits) - 1)) & ~(unsigned int)1) + 1;
-}
 
-ComponentBlock::ComponentBlock() : max_probe(0), next(nullptr)
-{
-    hash_a = gen_hash_a();
-    memset(buckets, 0, sizeof(buckets));
-}
-
-void ComponentBlock::optimize() {
-    Component *best_blocks[NumBuckets];
-    Component *temp[NumBuckets];
-
-    if (max_probe == 0)
-        return; // already optimal
-
-    // the current max_probe is the one to beat
-    unsigned int best_a = 0;
-    unsigned int best_max_p = max_probe;
-
-    for (int attempt = 0; attempt < 1000; ++attempt) {
-        memset(temp, 0, sizeof(temp));
-
-        // generate new random hash_a (which must be positive and odd)
-        unsigned int a = gen_hash_a();
-        unsigned int max_p = 0;
-
-        //puts("--");
-        // try to insert the values using the new hash function while
-        // keeping record of the longest probe length encountered (max_p)
-        for (int i = 0; i < NumBuckets; ++i) {
-            Component *c = buckets[i];
-            if (!c)
-                continue;
-            
-            unsigned int h = (a * c->type()) >> LowBits;
-
-            // probe until we find a free slot
-            unsigned int p = 0;
-            do {
-                unsigned int j = (h + p) & (NumBuckets - 1);
-
-                //printf("reinsert: %d -> %s\n", j, fourcc_str(c->type()));
-                if (!temp[j]) {
-                    temp[j] = c;
-                    break;
-                }
-            } while (++p < NumBuckets);
-
-            if (p > max_p)
-                max_p = p;
-        }
-
-        if (max_p < best_max_p) {
-            best_a = a;
-            best_max_p = max_p;
-            memcpy(best_blocks, temp, sizeof(temp));
-            if (max_p == 0)
-                break; // perfect; no point looking any more
-        }
-    }
-
-    if (best_max_p < max_probe) {
-        unsigned int h0 = (hash_a * (unsigned int)'POS') >> LowBits;
-        unsigned int h1 = (best_a * (unsigned int)'POS') >> LowBits;
-
-        unsigned int j0 = (h0 + 0) & (NumBuckets - 1);
-        unsigned int j1 = (h1 + 0) & (NumBuckets - 1);
-        //printf("j0: %d\n", j0);
-        //printf("j1: %d\n", j1);
-
-        hash_a = best_a;
-        max_probe = best_max_p;
-        memcpy(buckets, best_blocks, sizeof(best_blocks));
-    }
-}
-
-
-void Entity::insert(Component *c) {
+Component *Entity::get_component(ComponentType type) {
     ComponentBlock *b = &block;
-    ComponentType type = c->type();
-    
     do {
-        unsigned int h = (b->hash_a * type) >> ComponentBlock::LowBits;
-
-        // probe for a free slot
-        unsigned int p = 0;
-        do {
-            unsigned int j = (h + p) & (ComponentBlock::NumBuckets - 1);
-            if (!b->buckets[j]) {
-                b->buckets[j] = c;
-                if (p > b->max_probe)
-                    b->max_probe = p; // this probe was the longest yet
-                return;
-            }
-        } while (++p < ComponentBlock::NumBuckets);
-
-        // no free slots; try the next block
+        Component *c = b->table.lookup(type);
+        if (c)
+            return c;
         b = b->next;
     } while (b);
-    
-    assert(0);
-    // TODO: add new block
-}
-
-Component *Entity::lookup(ComponentType type) {
-    ComponentBlock *b = &block;
-    
-    do {
-        unsigned int h = (b->hash_a * type) >> ComponentBlock::LowBits;
-
-        // probe from the hashed slot
-        unsigned int p = 0;
-        do {
-            unsigned int j = (h + p) & (ComponentBlock::NumBuckets - 1);
-            Component *c = b->buckets[j];
-            if (!c)
-                printf("lookup: %d -> null\n", j);
-            else
-                printf("lookup: %d -> %s\n", j, fourcc_str(c->type()));
-            if (c && c->type() == type)
-                return c;
-        } while (++p <= b->max_probe);
-
-        // no match in this block, so we check the next (if any)
-        b = b->next;
-    } while (b);
-    
-    // it wasn't found in any of the blocks
     return nullptr;
 }
 
-void Entity::optimize() {
-    ComponentBlock *b = &block;
-    do {
-        b->optimize();
-        b = b->next;
-    } while (b);
-}
 
 
 
 
+class EntityManager {
+public:
+    ~EntityManager() {
+        for (Entity *e : entity_pool)
+            destroy_entity(e);
+    }
 
+    Entity *create_entity() {
+        return entity_pool.create();
+    }
 
-struct Chameleon : public Component {
-    ComponentType t;
+    void destroy_entity(Entity *e) {
+        ComponentBlock *b = &e->block;
+        do {
+            ComponentBlock *next = b->next;
+            for (Component *c : b->table)
+                c->destroy(this);
+            if (b != &e->block) // don't free embedded block
+                block_pool.free(b);
+            b = next;
+        } while (b);
+        entity_pool.free(e);
+    }
 
-    Chameleon(ComponentType t) : t(t) {}
+    void optimize_entity(Entity *e) {
+        ComponentBlock *b = &e->block;
+        do {
+            b->table.optimize(rnd);
+            b = b->next;
+        } while (b);
+    }
 
-    ComponentType type() override { return t; }
+    void add_component(Entity *e, Component *c) {
+        add_component(&e->block, c);
+    }
+
+    template <class T>
+    T *add_component(Entity *e) {
+        T *c = T::create(this);
+        add_component(e, c);
+        return c;
+    }
+
+    void del_component(Entity *e, ComponentType type) {
+        ComponentBlock *b = &e->block;
+        do {
+            Component *c = b->table.remove(type);
+            if (c) {
+                b->table.rehash();
+                c->destroy(this);
+                return;
+            }
+            b = b->next;
+        } while (b);
+    }
+
+    template <class T>
+    void del_component(Entity *e) {
+        del_component(e, T::TYPE);
+    }
+
+private:
+    void add_component(ComponentBlock *block, Component *c) {
+        ComponentBlock *b = block;
+
+        do {
+            if (b->table.insert(c))
+                return;
+            b = b->next;
+        } while (b);
+
+        block->next = block_pool.create(block->next);
+        add_component(block->next, c);
+    }
+
+    MTRand_int32 rnd;
+    Pool<ComponentBlock> block_pool;
+    IterablePool<Entity> entity_pool;
 };
+
+
+
+
+template <class T, unsigned int Type>
+struct HeapComponent : public Component {
+    enum { TYPE = Type };
+    ComponentType type() override { return TYPE; }
+    static T *create(EntityManager *m) { return new T; }
+    void destroy(EntityManager *m) override { delete static_cast<T *>(this); }
+};
+
+
+struct Spatial : public HeapComponent<Spatial, 'SPAT'> {
+    vec3 pos;
+};
+
+
 
 
 struct IntKey {
     static unsigned int key(int x) {
-        return (unsigned long)x;
+        return (unsigned int)x;
     }
 };
 
@@ -537,13 +391,28 @@ struct Rand {
 };
 
 static void teste() {
+    EntityManager manager;
+
+    Entity *e = manager.create_entity();
+    assert(e);
+
+    Spatial *s = manager.add_component<Spatial>(e);
+    assert(s);
+    assert(s == e->get_component<Spatial>());
+
+    manager.del_component<Spatial>(e);
+
+    assert(nullptr == e->get_component<Spatial>());
+
+
+    //return;
     assert(0 == int());
     assert(1 != int());
     assert(nullptr == Ptr());
 
     IntTable table;
 
-    /*assert(table.insert(10));
+    assert(table.insert(10));
     assert(table.insert(3));
     assert(table.insert(60));
     assert(table.insert(85));
@@ -552,63 +421,27 @@ static void teste() {
     assert(table.insert(305));
     table.optimize(Rand());
     printf("rand_count: %d\n", rand_count);
-    printf("max_probe: %d\n", table.max_probe);
-    printf("%d\n", table.lookup(10));
-    printf("%d\n", table.lookup(3));
-    printf("%d\n", table.lookup(11));*/
+    printf("max_probe: %d\n", table.get_max_probe());
+    assert(table.lookup(10) == 10);
+    assert(table.lookup(3) == 3);
+    assert(table.lookup(11) == 0);
+    assert(table.lookup(0xffffffff) == 0);
+    assert(table.lookup(0) == 0);
+    assert(table.remove(10) == 10);
+    assert(table.lookup(10) == 0);
 
-    for (int i = 0; i < 512; ++i)
+    for (int x : table)
+        printf("x: %d\n", x);
+
+    table.clear();
+    printf("capacity: %d\n", table.capacity());
+    for (int i = 0; i < 800; ++i)
         assert(table.insert(mtrand()));
 
-    printf("max_probe0: %d\n", table.max_probe);
+    printf("max_probe0: %d\n", table.get_max_probe());
     table.optimize(Rand());
     printf("rand_count: %d\n", rand_count);
-    printf("max_probe: %d\n", table.max_probe);
-
-    //return;
-    for (int i = 0; i < 1000; ++i)
-        rand();
-
-
-
-
-    Chameleon pos('POS');
-    Chameleon vel('VEL');
-    Chameleon ship('SHIP');
-    Chameleon anim('ANIM');
-    Chameleon boid('BOID');
-    Chameleon body('BODY');
-    Chameleon gfx('GFX');
-    Chameleon snd('SND');
-
-    Entity e;
-
-    e.insert(&pos);
-    e.insert(&vel);
-    e.insert(&ship);
-    e.insert(&anim);
-    e.insert(&boid);
-    e.insert(&body);
-    e.insert(&gfx);
-    e.insert(&snd);
-    assert(e.lookup('POS') && e.lookup('POS')->type() == 'POS');
-
-    e.optimize();
-
-    printf("max_probe: %d\n", e.block.max_probe);
-    for (int i = 0; i < ComponentBlock::NumBuckets; ++i) {
-        Component *c = e.block.buckets[i];
-        if (!c)
-            printf("name: null\n");
-        else
-            printf("name: %s\n", fourcc_str(c->type()));
-    }
-
-    assert(e.lookup('POS') && e.lookup('POS')->type() == 'POS');
-    assert(e.lookup('VEL')->type() == 'VEL');
-    assert(e.lookup('SHIP')->type() == 'SHIP');
-    assert(e.lookup('ANIM')->type() == 'ANIM');
-    assert(!e.lookup('NOPE'));
+    printf("max_probe: %d\n", table.get_max_probe());
 }
 
 

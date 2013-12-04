@@ -86,5 +86,8 @@
     <ClInclude Include="mtrand.h">
       <Filter>common</Filter>
     </ClInclude>
+    <ClInclude Include="fixedhashtable.h">
+      <Filter>common</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

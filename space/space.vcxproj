@@ -94,6 +94,7 @@
   <ItemGroup>
     <ClInclude Include="arena.h" />
     <ClInclude Include="bufferobject.h" />
+    <ClInclude Include="fixedhashtable.h" />
     <ClInclude Include="fpscamera.h" />
     <ClInclude Include="hashtable.h" />
     <ClInclude Include="list.h" />
