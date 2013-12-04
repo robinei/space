@@ -22,7 +22,7 @@ private:
     T buckets[NumBuckets];
 
 public:
-    unsigned int get_max_probe() {
+    unsigned int maxprobe() {
         return max_probe;
     }
 
@@ -70,6 +70,10 @@ public:
         return T();
     }
 
+    // if you intend to insert more values after removing some, you must first
+    // rehash, or otherwise you may insert duplicates of items already in the
+    // table due to the holes left by the deletes (holes may interrupt the
+    // probe which would otherwise reach the already inserted value)
     T remove(unsigned int key) {
         unsigned int h = (hash_a * key) >> LowBits;
         unsigned int p = 0;
@@ -127,17 +131,11 @@ public:
         bool operator!=(iterator it) const { return index != it.index; }
 
         iterator &operator++() {
-            if (buckets) {
-                while (1) {
-                    if (++index >= NumBuckets) {
-                        index = -1;
-                        buckets = nullptr;
-                        break;
-                    }
-                    if (buckets[index] != T())
-                        break;
-                }
-            }
+            while (++index < NumBuckets)
+            if (buckets[index] != T())
+                return *this;
+            buckets = nullptr;
+            index = NumBuckets;
             return *this;
         }
 
@@ -158,7 +156,7 @@ public:
     };
 
     iterator begin() { return iterator(buckets, -1); }
-    iterator end() { return iterator(nullptr, -1); }
+    iterator end() { return iterator(nullptr, NumBuckets); }
 };
 
 #endif

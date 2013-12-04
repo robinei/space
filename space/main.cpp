@@ -421,7 +421,7 @@ static void teste() {
     assert(table.insert(305));
     table.optimize(Rand());
     printf("rand_count: %d\n", rand_count);
-    printf("max_probe: %d\n", table.get_max_probe());
+    printf("max_probe: %d\n", table.maxprobe());
     assert(table.lookup(10) == 10);
     assert(table.lookup(3) == 3);
     assert(table.lookup(11) == 0);
@@ -438,10 +438,10 @@ static void teste() {
     for (int i = 0; i < 800; ++i)
         assert(table.insert(mtrand()));
 
-    printf("max_probe0: %d\n", table.get_max_probe());
+    printf("max_probe0: %d\n", table.maxprobe());
     table.optimize(Rand());
     printf("rand_count: %d\n", rand_count);
-    printf("max_probe: %d\n", table.get_max_probe());
+    printf("max_probe: %d\n", table.maxprobe());
 }
 
 
