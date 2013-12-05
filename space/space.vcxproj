@@ -83,6 +83,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="bufferobject.cpp" />
+    <ClCompile Include="ecos.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="mesh.cpp" />
     <ClCompile Include="mtrand.cpp" />
@@ -94,6 +95,7 @@
   <ItemGroup>
     <ClInclude Include="arena.h" />
     <ClInclude Include="bufferobject.h" />
+    <ClInclude Include="ecos.h" />
     <ClInclude Include="fixedhashtable.h" />
     <ClInclude Include="fpscamera.h" />
     <ClInclude Include="hashtable.h" />

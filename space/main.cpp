@@ -23,7 +23,7 @@
 #include "quadtree.h"
 #include "renderqueue.h"
 #include "mtrand.h"
-#include "fixedhashtable.h"
+#include "ecos.h"
 
 #define STBI_HEADER_FILE_ONLY
 #include "stb_image.c"
@@ -199,158 +199,6 @@ static void LoadTriangle() {
 
 
 
-
-class EntityManager;
-
-typedef unsigned int ComponentType;
-
-class Component {
-public:
-    virtual ~Component() {}
-
-    virtual ComponentType type() = 0;
-
-    virtual void destroy(EntityManager *m) = 0;
-};
-
-
-struct ComponentHashKey {
-    static unsigned int key(Component *c) {
-        return c->type();
-    }
-};
-typedef FixedHashTable<3, Component *, ComponentHashKey> ComponentTable;
-
-
-// we store component refs in an associative container that has the structure
-// of a linked list of fixed size hash tables using open addressing scheme.
-// we use universal hashing to ensure that most components fall into the exact
-// bucket that their type hashes to, meaning that probe lengths are usually 0.
-// chained blocks are independent, so lookup operations must try all blocks
-// until they find the type they are looking for, or fail.
-// table size should be set so that only one or two blocks are needed per entity.
-struct ComponentBlock {
-    ComponentTable table;
-
-    // if the table overflows, we allocate a new block.
-    ComponentBlock *next;
-
-    ComponentBlock(ComponentBlock *next = nullptr) : next(next) {}
-};
-
-
-class Entity {
-    friend class EntityManager;
-
-    // an entity alway has one embedded component block
-    ComponentBlock block;
-
-public:
-    Component *get_component(ComponentType type);
-
-    template <class T>
-    T *get_component() {
-        return static_cast<T *>(get_component(T::TYPE));
-    }
-};
-
-
-
-
-Component *Entity::get_component(ComponentType type) {
-    ComponentBlock *b = &block;
-    do {
-        Component *c = b->table.lookup(type);
-        if (c)
-            return c;
-        b = b->next;
-    } while (b);
-    return nullptr;
-}
-
-
-
-
-
-class EntityManager {
-public:
-    ~EntityManager() {
-        for (Entity *e : entity_pool)
-            destroy_entity(e);
-    }
-
-    Entity *create_entity() {
-        return entity_pool.create();
-    }
-
-    void destroy_entity(Entity *e) {
-        ComponentBlock *b = &e->block;
-        do {
-            ComponentBlock *next = b->next;
-            for (Component *c : b->table)
-                c->destroy(this);
-            if (b != &e->block) // don't free embedded block
-                block_pool.free(b);
-            b = next;
-        } while (b);
-        entity_pool.free(e);
-    }
-
-    void optimize_entity(Entity *e) {
-        ComponentBlock *b = &e->block;
-        do {
-            b->table.optimize(rnd);
-            b = b->next;
-        } while (b);
-    }
-
-    void add_component(Entity *e, Component *c) {
-        add_component(&e->block, c);
-    }
-
-    template <class T>
-    T *add_component(Entity *e) {
-        T *c = T::create(this);
-        add_component(e, c);
-        return c;
-    }
-
-    void del_component(Entity *e, ComponentType type) {
-        ComponentBlock *b = &e->block;
-        do {
-            Component *c = b->table.remove(type);
-            if (c) {
-                b->table.rehash();
-                c->destroy(this);
-                return;
-            }
-            b = b->next;
-        } while (b);
-    }
-
-    template <class T>
-    void del_component(Entity *e) {
-        del_component(e, T::TYPE);
-    }
-
-private:
-    void add_component(ComponentBlock *block, Component *c) {
-        ComponentBlock *b = block;
-
-        do {
-            if (b->table.insert(c))
-                return;
-            b = b->next;
-        } while (b);
-
-        block->next = block_pool.create(block->next);
-        add_component(block->next, c);
-    }
-
-    MTRand_int32 rnd;
-    Pool<ComponentBlock> block_pool;
-    IterablePool<Entity> entity_pool;
-};
 
 
 
@@ -793,8 +641,8 @@ int main(int argc, char *argv[]) {
         freopen("CON", "w", stderr);
     }
 #endif
-    teste();
-    return 0;
+    //teste();
+    //return 0;
     printf("Starting...\n");
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0)

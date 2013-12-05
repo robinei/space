@@ -36,6 +36,9 @@
     <ClCompile Include="mtrand.cpp">
       <Filter>common</Filter>
     </ClCompile>
+    <ClCompile Include="ecos.cpp">
+      <Filter>common</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="program.h">
@@ -87,6 +90,9 @@
       <Filter>common</Filter>
     </ClInclude>
     <ClInclude Include="fixedhashtable.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="ecos.h">
       <Filter>common</Filter>
     </ClInclude>
   </ItemGroup>
