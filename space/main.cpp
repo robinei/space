@@ -198,98 +198,77 @@ static void LoadTriangle() {
 
 
 
-
-
-
-
-
-template <class T, unsigned int Type>
-struct HeapComponent : public Component {
+template <class T, SystemType Type>
+class PoolSystem : public System {
+public:
     enum { TYPE = Type };
+    SystemType type() override { return TYPE; }
+
+    T *create_component() {
+        return pool.create();
+    }
+
+    void destroy_component(T *c) {
+        pool.free(c);
+    }
+
+    typename IterablePool<T>::iterator begin() { return pool.begin(); }
+    typename IterablePool<T>::iterator end() { return pool.end(); }
+
+protected:
+    IterablePool<T> pool;
+};
+
+
+template <class T, ComponentType Type, class SystemT>
+struct PoolComponent : public Component {
+    enum { TYPE = Type };
+    
     ComponentType type() override { return TYPE; }
-    static T *create(EntityManager *m) { return new T; }
-    void destroy(EntityManager *m) override { delete static_cast<T *>(this); }
+    
+    static T *create(EntityManager *m) {
+        SystemT *sys = m->get_system<SystemT>();
+        return sys->create_component();
+    }
+
+    void destroy(EntityManager *m) override {
+        SystemT *sys = m->get_system<SystemT>();
+        sys->destroy_component(static_cast<T *>(this));
+    }
 };
 
 
-struct Spatial : public HeapComponent<Spatial, 'SPAT'> {
+
+
+
+
+
+struct Body :
+    public PoolComponent<Body, 'BODY', class BodySystem>,
+    public QuadTree::Object
+{
     vec3 pos;
-};
+    vec3 vel;
+    Entity *entity;
 
-
-
-
-struct IntKey {
-    static unsigned int key(int x) {
-        return (unsigned int)x;
+    vec2 qtree_position() override {
+        return vec2(pos);
     }
+
+    void init(EntityManager *m, Entity *e) override;
 };
 
-typedef FixedHashTable<10, int, IntKey> IntTable;
+class BodySystem : public PoolSystem<Body, 'BODY'> {
+public:
+    BodySystem() : quad_tree(Rect(-1000, -1000, 1000, 1000), 7) {}
 
-typedef void *Ptr;
-static int rand_count = 0;
-static MTRand_int32 mtrand;
-
-struct Rand {
-    unsigned long operator()() {
-        ++rand_count;
-        return mtrand();
-    }
+    QuadTree quad_tree;
 };
 
-static void teste() {
-    EntityManager manager;
-
-    Entity *e = manager.create_entity();
-    assert(e);
-
-    Spatial *s = manager.add_component<Spatial>(e);
-    assert(s);
-    assert(s == e->get_component<Spatial>());
-
-    manager.del_component<Spatial>(e);
-
-    assert(nullptr == e->get_component<Spatial>());
-
-
-    //return;
-    assert(0 == int());
-    assert(1 != int());
-    assert(nullptr == Ptr());
-
-    IntTable table;
-
-    assert(table.insert(10));
-    assert(table.insert(3));
-    assert(table.insert(60));
-    assert(table.insert(85));
-    assert(table.insert(49));
-    assert(table.insert(36));
-    assert(table.insert(305));
-    table.optimize(Rand());
-    printf("rand_count: %d\n", rand_count);
-    printf("max_probe: %d\n", table.maxprobe());
-    assert(table.lookup(10) == 10);
-    assert(table.lookup(3) == 3);
-    assert(table.lookup(11) == 0);
-    assert(table.lookup(0xffffffff) == 0);
-    assert(table.lookup(0) == 0);
-    assert(table.remove(10) == 10);
-    assert(table.lookup(10) == 0);
-
-    for (int x : table)
-        printf("x: %d\n", x);
-
-    table.clear();
-    printf("capacity: %d\n", table.capacity());
-    for (int i = 0; i < 800; ++i)
-        assert(table.insert(mtrand()));
-
-    printf("max_probe0: %d\n", table.maxprobe());
-    table.optimize(Rand());
-    printf("rand_count: %d\n", rand_count);
-    printf("max_probe: %d\n", table.maxprobe());
+void Body::init(EntityManager *m, Entity *e) {
+    BodySystem *sys = m->get_system<BodySystem>();
+    sys->quad_tree.insert(this);
+    entity = e;
 }
 
 
@@ -299,90 +278,7 @@ static void teste() {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-class World;
-
-class Body : public QuadTree::Object {
-public:
-    vec3 pos;
-    vec3 vel;
-
-
-    ListLink world_link;
-
-    Body() {}
-
-    virtual vec2 qtree_position() {
-        return vec2(pos);
-    }
-
-    virtual void update(World &world) {}
-    virtual void render(RenderQueue *renderer) {}
-
-private:
-    Body(const Body &);
-    Body &operator=(const Body &);
-};
-
-
-void free_body(Body *b);
-
-class World {
-public:
-    typedef List<Body, &Body::world_link> BodyList;
-
-    BodyList bodies;
-    QuadTree quadtree;
-    float dt;
-
-    World() : quadtree(Rect(-1000, -1000, 1000, 1000), 7) {}
-
-    ~World() {
-        while (!bodies.empty())
-            free_body(bodies.front());
-    }
-
-    void add_body(Body *body) {
-        bodies.push_back(body);
-        quadtree.insert(body);
-    }
-
-    void update() {
-        for (Body *body : bodies)
-            body->update(*this);
-    }
-
-    void render() {
-        for (Body *body : bodies)
-            body->render(&renderqueue);
-    }
-
-private:
-    World(const World &);
-    World &operator=(const World &);
-};
-
-
-
-
 struct UpdateContext {
-    UpdateContext(World &w) : world(w), quadtree(w.quadtree) {}
-
-    World &world;
-    QuadTree &quadtree;
     std::vector<QuadTree::Object *> neighbours;
 };
 
@@ -392,17 +288,23 @@ vec3 limit(vec3 v, float len) {
     return v;
 }
 
-class Boid : public Body {
-public:
+
+struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
     vec3 dir;
     float maxspeed;
     float maxforce;
     int team;
+    Body *body;
 
-    void update(World &world) {
-        UpdateContext context(world);
+    void init(EntityManager *m, Entity *e) override;
 
-        context.quadtree.query(vec2(pos), 50.0f, context.neighbours);
+
+
+    void update(EntityManager *m, float dt) {
+        UpdateContext context;
+
+        BodySystem *sys = m->get_system<BodySystem>();
+        sys->quad_tree.query(vec2(body->pos), 50.0f, context.neighbours);
         //printf("context.neighbours: %d\n", context.neighbours.size());
 
         vec3 acc(0, 0, 0);
@@ -416,24 +318,24 @@ public:
 
         acc += seek(cursor_pos) * 1.0f;
 
-        vel += acc * world.dt;
-        vel = limit(vel, maxspeed);
+        body->vel += acc * dt;
+        body->vel = limit(body->vel, maxspeed);
 
-        pos += vel * world.dt;
+        body->pos += body->vel * dt;
         //pos.z = 0;
 
-        qtree_update();
+        body->qtree_update();
 
-        vec3 v = glm::normalize(vel);
+        vec3 v = glm::normalize(body->vel);
         float a = glm::angle(dir, v);
         if (fabsf(a) > 0.001f) {
             vec3 axis(glm::cross(dir, v));
-            dir = glm::normalize(dir * glm::angleAxis(glm::min(45.0f * world.dt, a), axis));
+            dir = glm::normalize(dir * glm::angleAxis(glm::min(45.0f * dt, a), axis));
         }
     }
 
     vec3 planehug(UpdateContext &context) {
-        vec3 target = pos;
+        vec3 target = body->pos;
         target.z = 0;
         return arrive(target);
     }
@@ -443,15 +345,15 @@ public:
         vec3 sum(0, 0, 0);
         int count = 0;
         for (auto obj : context.neighbours) {
-            Boid *b = static_cast<Boid *>(obj);
-            if (b == this) continue;
-            vec3 d = pos - b->pos;
+            Body *b = static_cast<Body *>(obj);
+            if (b == body) continue;
+            vec3 d = body->pos - b->pos;
             float len = glm::length(d);
             if (len > sep || len <= 0.00001f) continue;
             //d = glm::normalize(d);
             float dz = d.z;
             if (dz == 0.0f)
-                dz = glm::dot(glm::normalize(vel), glm::normalize(b->vel));
+                dz = glm::dot(glm::normalize(body->vel), glm::normalize(b->vel));
             dz /= fabsf(dz);
             dz /= len;
             sum += vec3(0, 0, dz);
@@ -468,9 +370,9 @@ public:
         vec3 sum(0, 0, 0);
         int count = 0;
         for (auto obj : context.neighbours) {
-            Boid *b = static_cast<Boid *>(obj);
-            if (b == this) continue;
-            vec3 d = pos - b->pos;
+            Body *b = static_cast<Body *>(obj);
+            if (b == body) continue;
+            vec3 d = body->pos - b->pos;
             d.z = 0;
             float len = glm::length(d);
             if (len > sep || len <= 0.00001f) continue;
@@ -490,10 +392,13 @@ public:
         vec3 sum(0, 0, 0);
         int count = 0;
         for (auto obj : context.neighbours) {
-            Boid *b = static_cast<Boid *>(obj);
-            if (b == this) continue;
-            if (b->team != team) continue;
-            vec3 d = pos - b->pos;
+            Body *b = static_cast<Body *>(obj);
+            if (b == body) continue;
+            
+            Ship *s = b->entity->get_component<Ship>();
+            if (s->team != team) continue;
+            
+            vec3 d = body->pos - b->pos;
             float dist = glm::length(d);
             if (dist > neighbordist) continue;
             sum += b->vel;
@@ -510,10 +415,13 @@ public:
         vec3 sum(0, 0, 0);
         int count = 0;
         for (auto obj : context.neighbours) {
-            Boid *b = static_cast<Boid *>(obj);
-            if (b == this) continue;
-            if (b->team != team) continue;
-            vec3 d = pos - b->pos;
+            Body *b = static_cast<Body *>(obj);
+            if (b == body) continue;
+
+            Ship *s = b->entity->get_component<Ship>();
+            if (s->team != team) continue;
+            
+            vec3 d = body->pos - b->pos;
             float len = glm::length(d);
             if (len > neighbordist) continue;
             sum += b->pos;
@@ -526,7 +434,7 @@ public:
     }
 
     vec3 seek(vec3 target) {
-        return steer(target - pos);
+        return steer(target - body->pos);
     }
 
     vec3 steer(vec3 dir) {
@@ -534,12 +442,12 @@ public:
         if (len < 0.000001f)
             return vec3(0, 0, 0);
         dir *= maxspeed / len;
-        return limit(dir - vel, maxforce);
+        return limit(dir - body->vel, maxforce);
     }
 
     vec3 arrive(vec3 target) {
         float brakelimit = 10.0f;
-        vec3 desired = target - pos;
+        vec3 desired = target - body->pos;
         float len = glm::length(desired);
         if (len < 0.000001f)
             return vec3(0, 0, 0);
@@ -567,8 +475,9 @@ public:
         return m;
     }
 
+
     void render(RenderQueue *renderqueue) {
-        mat4 model = glm::translate(pos) * calc_rotation_matrix();
+        mat4 model = glm::translate(body->pos) * calc_rotation_matrix();
         mat4 vm = view_matrix * model;
         mat4 pvm = projection_matrix * vm;
         mat3 normal = glm::inverseTranspose(mat3(vm));
@@ -592,23 +501,50 @@ public:
     }
 };
 
+class ShipSystem : public PoolSystem<Ship, 'SHIP'> {
+public:
+    void update(EntityManager *m, float dt);
 
-Pool<Boid> boid_pool;
+    void render(RenderQueue *renderqueue) {
+        for (Ship *ship : *this) {
+            ship->render(renderqueue);
+        }
+    }
+};
 
-static void spawn_boid(World &world, vec3 pos) {
-    Boid *b = boid_pool.create();
+void Ship::init(EntityManager *m, Entity *e) {
+    body = e->get_component<Body>();
+    assert(body);
+}
+
+void ShipSystem::update(EntityManager *m, float dt) {
+    for (Ship *ship : *this) {
+        ship->update(m, dt);
+    }
+}
+
+
+
+
+
+
+
+static void do_spawn_boid(EntityManager *m, vec3 pos) {
+    Entity *e = m->create_entity();
+    
+    Body *b = m->add_component<Body>(e);
     b->pos = pos;
     b->vel = vec3(glm::diskRand(10.0f), 0.0f);
-    b->dir = glm::normalize(b->vel);
-    b->maxspeed = 40;
-    b->maxforce = 1;
-    b->team = rand() % 2;
-    world.add_body(b);
+
+    Ship *s = m->add_component<Ship>(e);
+    s->dir = glm::normalize(b->vel);
+    s->maxspeed = 40;
+    s->maxforce = 1;
+    s->team = rand() % 2;
+    
+    m->init_entity(e);
 }
 
-void free_body(Body *b) {
-    boid_pool.free(static_cast<Boid *>(b));
-}
 
 
 
@@ -641,8 +577,6 @@ int main(int argc, char *argv[]) {
         freopen("CON", "w", stderr);
     }
 #endif
-    //teste();
-    //return 0;
     printf("Starting...\n");
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
@@ -738,10 +672,15 @@ int main(int argc, char *argv[]) {
 
     //SDL_SetRelativeMouseMode(SDL_TRUE);
 
-    World world;
+
+    BodySystem body_system;
+    ShipSystem ship_system;
+    EntityManager entity_manager;
+    entity_manager.add_system(&body_system);
+    entity_manager.add_system(&ship_system);
 
     for (int i = 0; i < 40; ++i) {
-        spawn_boid(world, vec3(glm::diskRand(200.0f), 0.0f));
+        do_spawn_boid(&entity_manager, vec3(glm::diskRand(200.0f), 0.0f));
     }
 
     vec3 camera_pos(0, -5, 20);
@@ -765,7 +704,6 @@ int main(int argc, char *argv[]) {
         Uint32 tickdiff = ticks - prevticks;
         prevticks = ticks;
         float dt = (float)tickdiff / 1000.0f;
-        world.dt = dt;
 
         int mx = 0, my = 0;
         SDL_GetMouseState(&mx, &my);
@@ -791,8 +729,8 @@ int main(int argc, char *argv[]) {
             cursor_pos = Plane::XY().ray_intersect(p0, p1);
         }
 
-        world.update();
-        //world.bodies.front()->pos = cursor_pos;
+        ship_system.update(&entity_manager, dt);
+        entity_manager.update();
 
 
         //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -808,7 +746,7 @@ int main(int argc, char *argv[]) {
 
         {
             qtree_lines.clear();
-            world.quadtree.gather_outlines(qtree_lines);
+            body_system.quad_tree.gather_outlines(qtree_lines);
             if (qtree_lines.size() > qtree_max_vertexes)
                 qtree_lines.resize(qtree_max_vertexes);
             qtree_buf->bind();
@@ -826,7 +764,7 @@ int main(int argc, char *argv[]) {
 
         {
             vlines_lines.clear();
-            for (auto b : world.bodies) {
+            for (auto b : body_system) {
                 vec3 pos = b->pos;
                 pos.z = 0;
                 vlines_lines.push_back(pos);
@@ -845,7 +783,7 @@ int main(int argc, char *argv[]) {
             renderqueue.flush();
         }
 
-        world.render();
+        ship_system.render(&renderqueue);
         renderqueue.flush();
         
         SDL_GL_SwapWindow(window);
@@ -893,7 +831,7 @@ int main(int argc, char *argv[]) {
                 break;
             }
             case SDL_MOUSEBUTTONDOWN:
-                spawn_boid(world, cursor_pos);
+                do_spawn_boid(&entity_manager, cursor_pos);
                 break;
             case SDL_QUIT:
                 running = false;

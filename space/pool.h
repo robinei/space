@@ -71,7 +71,6 @@ class IterablePool {
 
     struct Block {
         Block *next;
-        int offset;
         int index;
         int num_objects;
         char *livemap;
@@ -103,7 +102,7 @@ public:
 
         iterator &operator++() {
             while (block) {
-                if (++index >= block->offset + block->index) {
+                if (++index >= block->index) {
                     index = -1;
                     block = block->next;
                 } else if (block->livemap[index]) {
@@ -205,7 +204,6 @@ private:
         int livemap_offset = sizeof(Block)+sizeof(T)*num_objects;
         Block *b = (Block *)::malloc(livemap_offset + num_objects);
         b->next = next;
-        b->offset = next ? next->offset + next->num_objects : 0;
         b->index = 0;
         b->num_objects = num_objects;
         b->objects = (T *)((char *)b + sizeof(Block));

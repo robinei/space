@@ -23,14 +23,26 @@ EntityManager::~EntityManager() {
         destroy_entity(e);
 }
 
+void EntityManager::update() {
+    for (Entity *e : kill_this_time)
+        really_destroy_entity(e);
+    kill_this_time = kill_next_time;
+    kill_next_time.clear();
+}
+
 Entity *EntityManager::create_entity() {
     return entity_pool.create();
 }
 
 void EntityManager::destroy_entity(Entity *e) {
-    ComponentBlock *b = &e->block;
+    e->_dying = true;
+    kill_next_time.push_back(e);
+}
+
+void EntityManager::really_destroy_entity(Entity *e) {
+    Entity::ComponentBlock *b = &e->block;
     do {
-        ComponentBlock *next = b->next;
+        Entity::ComponentBlock *next = b->next;
         for (Component *c : b->table)
             c->destroy(this);
         if (b != &e->block) // don't free embedded block
@@ -41,9 +53,18 @@ void EntityManager::destroy_entity(Entity *e) {
 }
 
 void EntityManager::optimize_entity(Entity *e) {
-    ComponentBlock *b = &e->block;
+    Entity::ComponentBlock *b = &e->block;
     do {
         b->table.optimize(rnd);
+        b = b->next;
+    } while (b);
+}
+
+void EntityManager::init_entity(Entity *e) {
+    Entity::ComponentBlock *b = &e->block;
+    do {
+        for (Component *c : b->table)
+            c->init(this, e);
         b = b->next;
     } while (b);
 }
@@ -53,7 +74,7 @@ void EntityManager::add_component(Entity *e, Component *c) {
 }
 
 void EntityManager::del_component(Entity *e, ComponentType type) {
-    ComponentBlock *b = &e->block;
+    Entity::ComponentBlock *b = &e->block;
     do {
         Component *c = b->table.remove(type);
         if (c) {
@@ -65,8 +86,8 @@ void EntityManager::del_component(Entity *e, ComponentType type) {
     } while (b);
 }
 
-void EntityManager::add_component(ComponentBlock *block, Component *c) {
-    ComponentBlock *b = block;
+void EntityManager::add_component(Entity::ComponentBlock *block, Component *c) {
+    Entity::ComponentBlock *b = block;
 
     do {
         if (b->table.insert(c))

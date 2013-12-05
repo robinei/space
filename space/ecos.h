@@ -4,40 +4,28 @@
 #include "fixedhashtable.h"
 #include "pool.h"
 #include "mtrand.h"
+#include <vector>
 
-
+class Entity;
 class EntityManager;
 
+typedef unsigned int SystemType;
 typedef unsigned int ComponentType;
+
+
+class System {
+public:
+    ~System() {}
+    virtual SystemType type() = 0;
+};
+
 
 class Component {
 public:
     virtual ~Component() {}
     virtual ComponentType type() = 0;
     virtual void destroy(EntityManager *m) = 0;
-};
-
-
-struct ComponentHashKey {
-    static unsigned int key(Component *c) {
-        return c->type();
-    }
-};
-typedef FixedHashTable<3, Component *, ComponentHashKey> ComponentTable;
-
-
-// we store component refs in an associative container that has the structure
-// of a linked list of fixed size hash tables using open addressing scheme.
-// we use universal hashing to ensure that most components fall into the exact
-// bucket that their type hashes to, meaning that probe lengths are usually 0.
-// chained blocks are independent, so lookup operations must try all blocks
-// until they find the type they are looking for, or fail.
-// table size should be set so that only one or two blocks are needed per entity.
-struct ComponentBlock {
-    ComponentTable table;
-    ComponentBlock *next; // if the table overflows, we allocate a new block.
-
-    ComponentBlock(ComponentBlock *next = nullptr) : next(next) {}
+    virtual void init(EntityManager *m, Entity *e) {}
 };
 
 
@@ -50,37 +38,53 @@ public:
         return static_cast<T *>(get_component(T::TYPE));
     }
 
+    // entities that are to be destroyed will live for exactly one frame
+    // tith dying() == true, before being destroyed
+    bool dying() { return _dying;  }
+
 private:
     friend class EntityManager;
-    ComponentBlock block; // an entity always has one embedded component block
+    template <class T> friend class IterablePool;
+
+    Entity() : _dying(false) {}
+
+    struct ComponentHashKey {
+        static unsigned int key(Component *c) { return c->type(); }
+    };
+    typedef FixedHashTable<3, Component *, ComponentHashKey> ComponentTable;
+
+    // We store component refs in an associative container that has the
+    // structure of a linked list of fixed size hash tables using open
+    // addressing scheme.
+    // We use universal hashing to ensure that most components fall into the
+    // exact bucket that their type hashes to, meaning that probe lengths are
+    // usually 0.
+    // Chained blocks are independent, so lookup operations must try all
+    // blocks until they find the type they are looking for, or fail.
+    // Table size should be set so that only one or two blocks are needed
+    // per entity.
+    struct ComponentBlock {
+        ComponentTable table;
+        ComponentBlock *next; // if the table overflows, we alloc a new block.
+
+        ComponentBlock(ComponentBlock *next = nullptr) : next(next) {}
+    };
+
+    bool _dying;
+    ComponentBlock block; // an entity always has one embedded block
 };
-
-
-
-typedef unsigned int SystemType;
-
-class System {
-public:
-    ~System() {}
-    virtual SystemType type() = 0;
-};
-
-struct SystemHashKey {
-    static unsigned int key(System *c) {
-        return c->type();
-    }
-};
-typedef FixedHashTable<8, System *, SystemHashKey> SystemTable;
-
 
 
 class EntityManager {
 public:
     ~EntityManager();
 
+    void update();
+
     Entity *create_entity();
     void destroy_entity(Entity *e);
     void optimize_entity(Entity *e);
+    void init_entity(Entity *e);
 
     void add_component(Entity *e, Component *c);
     void del_component(Entity *e, ComponentType type);
@@ -107,12 +111,21 @@ public:
     }
 
 private:
-    void add_component(ComponentBlock *block, Component *c);
+    void really_destroy_entity(Entity *e);
+    void add_component(Entity::ComponentBlock *block, Component *c);
 
-    MTRand_int32 rnd;
-    Pool<ComponentBlock> block_pool;
+    struct SystemHashKey {
+        static unsigned int key(System *c) { return c->type(); }
+    };
+    typedef FixedHashTable<8, System *, SystemHashKey> SystemTable;
+
+    MTRand_int32 rnd; // used to generate universal hash coefficients
+    Pool<Entity::ComponentBlock> block_pool;
     IterablePool<Entity> entity_pool;
     SystemTable systems;
+
+    std::vector<Entity *> kill_next_time;
+    std::vector<Entity *> kill_this_time;
 };
 
 #endif
