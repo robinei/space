@@ -33,16 +33,8 @@ public:
     void remove(Object *obj);
 
     template <class Func>
-    void query(Rect rect, Func func) {
-        root->query(rect, func);
-    }
-
-    template <class Func>
-    void query(vec2 pos, float radius, Func func) {
-        Rect rect;
-        rect.min = pos - vec2(radius, radius);
-        rect.max = pos + vec2(radius, radius);
-        root->query(rect, pos, radius, func);
+    void query(float x0, float y0, float x1, float y1, Func func) {
+        root->query(x0, y0, x1, y1, func);
     }
 
     template <class Func>
@@ -102,40 +94,19 @@ private:
         }
 
         template <class Func>
-        void query(Rect rect, Func func) {
+        void query(float x0, float y0, float x1, float y1, Func func) {
             if (child[0]) {
-                if (rect.min.y < child[0]->rect.max.y) {
-                    if (rect.min.x < child[0]->rect.max.x) child[0]->query(rect, func);
-                    if (rect.max.x > child[1]->rect.min.x) child[1]->query(rect, func);
+                if (y0 < child[0]->rect.max.y) {
+                    if (x0 < child[0]->rect.max.x) child[0]->query(x0, y0, x1, y1, func);
+                    if (x1 > child[1]->rect.min.x) child[1]->query(x0, y0, x1, y1, func);
                 }
-                if (rect.max.y > child[2]->rect.min.y) {
-                    if (rect.min.x < child[2]->rect.max.x) child[2]->query(rect, func);
-                    if (rect.max.x > child[3]->rect.min.x) child[3]->query(rect, func);
+                if (y1 > child[2]->rect.min.y) {
+                    if (x0 < child[2]->rect.max.x) child[2]->query(x0, y0, x1, y1, func);
+                    if (x1 > child[3]->rect.min.x) child[3]->query(x0, y0, x1, y1, func);
                 }
             } else {
                 for (Object *obj : objects) {
-                    if (rect.contains(obj->qtree_position()))
-                        func(obj);
-                }
-            }
-        }
-
-        template <class Func>
-        void query(Rect rect, vec2 pos, float radius, Func func) {
-            if (child[0]) {
-                if (rect.min.y < child[0]->rect.max.y) {
-                    if (rect.min.x < child[0]->rect.max.x) child[0]->query(rect, pos, radius, func);
-                    if (rect.max.x > child[1]->rect.min.x) child[1]->query(rect, pos, radius, func);
-                }
-                if (rect.max.y > child[2]->rect.min.y) {
-                    if (rect.min.x < child[2]->rect.max.x) child[2]->query(rect, pos, radius, func);
-                    if (rect.max.x > child[3]->rect.min.x) child[3]->query(rect, pos, radius, func);
-                }
-            } else {
-                for (Object *obj : objects) {
-                    vec2 d = obj->qtree_position() - pos;
-                    if (d.x*d.x + d.y*d.y < radius*radius)
-                        func(obj);
+                    func(obj);
                 }
             }
         }

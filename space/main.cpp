@@ -292,7 +292,7 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
     int team;
     Body *body;
 
-    enum { MAX_FRIENDS  = 4 };
+    enum { MAX_FRIENDS = 4 };
     Entity *friends[MAX_FRIENDS];
     float friend_radius;
 
@@ -309,11 +309,19 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
 
         memset(friends, 0, sizeof(friends));
         int num_neightbours = 0;
-        sys->quad_tree.query(vec2(body->pos), friend_radius, [&](QuadTree::Object *obj) mutable {
-            if (num_neightbours < MAX_FRIENDS) {
-                Body *body = static_cast<Body *>(obj);
-                friends[num_neightbours] = body->entity;
-            }
+        vec2 p(body->pos);
+        float friend_radius_squared = friend_radius*friend_radius;
+        sys->quad_tree.query(p.x - friend_radius, p.y - friend_radius,
+                             p.x + friend_radius, p.y + friend_radius,
+                             [&](QuadTree::Object *obj) mutable 
+        {
+            Body *b = static_cast<Body *>(obj);
+            vec2 d = vec2(b->pos) - p;
+            float dist_squared = d.x*d.x + d.y*d.y;
+            if (dist_squared > friend_radius_squared)
+                return;
+            if (num_neightbours < MAX_FRIENDS)
+                friends[num_neightbours] = b->entity;
             num_neightbours++;
         });
         if (num_neightbours < MAX_FRIENDS) friend_radius += 0.1f;
