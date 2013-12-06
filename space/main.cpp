@@ -251,8 +251,9 @@ struct Body :
     vec3 vel;
     Entity *entity;
 
-    vec2 qtree_position() override {
-        return vec2(pos);
+    void qtree_position(float &x, float &y) override {
+        x = pos.x;
+        y = pos.y;
     }
 
     void init(EntityManager *m, Entity *e) override;
@@ -260,7 +261,7 @@ struct Body :
 
 class BodySystem : public PoolSystem<Body, 'BODY'> {
 public:
-    BodySystem() : quad_tree(Rect(-1000, -1000, 1000, 1000), 7) {}
+    BodySystem() : quad_tree(-1000, -1000, 1000, 1000, 7) {}
 
     QuadTree quad_tree;
 };

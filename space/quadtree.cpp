@@ -14,17 +14,26 @@ void QuadTree::Object::qtree_remove() {
 }
 
 void QuadTree::Object::qtree_update() {
-    if (qtree_node && !qtree_node->rect.contains(qtree_position())) {
-        QuadTree *qtree = qtree_node->qtree;
-        qtree->remove(this);
-        qtree->insert(this);
+    if (qtree_node) {
+        float x, y;
+        qtree_position(x, y);
+        
+        if (x < qtree_node->x0 ||
+            y < qtree_node->y0 ||
+            x > qtree_node->x1 ||
+            y > qtree_node->y1)
+        {
+            QuadTree *qtree = qtree_node->qtree;
+            qtree->remove(this);
+            qtree->insert(this);
+        }
     }
 }
 
 
 
-QuadTree::QuadTree(Rect rect, int max_depth) : max_depth(max_depth) {
-    root = new_node(nullptr, rect);
+QuadTree::QuadTree(float x0, float y0, float x1, float y1, int max_depth) : max_depth(max_depth) {
+    root = new_node(nullptr, x0, y0, x1, y1);
 }
 
 void QuadTree::insert(Object *obj) {
@@ -45,26 +54,28 @@ void QuadTree::insert(Node *n, Object *obj) {
         }
 
         // this node is full; split into four children
-        vec2 min(n->rect.min);
-        vec2 max(n->rect.max);
-        float w = (max.x - min.x) / 2.0f;
-        float h = (max.y - min.y) / 2.0f;
-        n->child[0] = new_node(n, Rect(min, vec2(min.x + w, min.y + h)));
-        n->child[1] = new_node(n, Rect(vec2(min.x + w, min.y), vec2(max.x, min.y + h)));
-        n->child[2] = new_node(n, Rect(vec2(min.x, min.y + h), vec2(min.x + w, max.y)));
-        n->child[3] = new_node(n, Rect(vec2(min.x + w, min.y + h), max));
+        float w = (n->x1 - n->x0) * 0.5f;
+        float h = (n->y1 - n->y0) * 0.5f;
+        n->child[0] = new_node(n, n->x0, n->y0, n->x0 + w, n->y0 + h);
+        n->child[1] = new_node(n, n->x0 + w, n->y0, n->x1, n->y0 + h);
+        n->child[2] = new_node(n, n->x0, n->y0 + h, n->x0 + w, n->y1);
+        n->child[3] = new_node(n, n->x0 + w, n->y0 + h, n->x1, n->y1);
 
         // spread objects among children
         while (n->num_objects) {
             Object *obj2 = n->objects.front();
             n->remove(obj2);
-            insert(n->calc_child(obj2->qtree_position()), obj2);
+            float x, y;
+            obj2->qtree_position(x, y);
+            insert(n->calc_child(x, y), obj2);
         }
         assert(n->objects.empty());
     }
 
     // this is an internal node, so we recurse
-    insert(n->calc_child(obj->qtree_position()), obj);
+    float x, y;
+    obj->qtree_position(x, y);
+    insert(n->calc_child(x, y), obj);
 }
 
 void QuadTree::remove(Object *obj) {
@@ -127,10 +138,14 @@ void QuadTree::maybe_merge_with_siblings(Node *n) {
     maybe_merge_with_siblings(parent);
 }
 
-QuadTree::Node *QuadTree::new_node(Node *parent, Rect rect) {
+QuadTree::Node *QuadTree::new_node(Node *parent, float x0, float y0, float x1, float y1) {
     Node *n = pool.create();
-    n->rect = rect;
-    n->center = rect.center();
+    n->x0 = x0;
+    n->y0 = y0;
+    n->x1 = x1;
+    n->y1 = y1;
+    n->center_x = x0 + (x1 - x0) * 0.5f;
+    n->center_y = y0 + (y1 - y0) * 0.5f;
     n->qtree = this;
     n->parent = parent;
     n->depth = parent ? parent->depth + 1 : 0;
