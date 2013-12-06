@@ -1,12 +1,13 @@
 #ifndef QUADTREE_H
 #define QUADTREE_H
 
-#include "listlink.h"
+#include "list.h"
 #include "mymath.h"
 #include "pool.h"
-#include <vector>
 
 class QuadTree {
+    class Node;
+
 public:
     // objects that want to be stored in the tree must derive from this
     class Object {
@@ -22,7 +23,7 @@ public:
     private:
         friend class QuadTree;
         friend class Node;
-        class Node *qtree_node;
+        class QuadTree::Node *qtree_node;
         ListLink qtree_link;
     };
 
@@ -31,12 +32,130 @@ public:
     void insert(Object *obj);
     void remove(Object *obj);
 
-    void query(Rect rect, std::vector<Object *> &result);
-    void query(vec2 pos, float radius, std::vector<Object *> &result);
+    template <class Func>
+    void query(Rect rect, Func func) {
+        root->query(rect, func);
+    }
 
-    void gather_outlines(std::vector<vec2> &lines);
+    template <class Func>
+    void query(vec2 pos, float radius, Func func) {
+        Rect rect;
+        rect.min = pos - vec2(radius, radius);
+        rect.max = pos + vec2(radius, radius);
+        root->query(rect, pos, radius, func);
+    }
+
+    template <class Func>
+    void gather_outlines(Func func) {
+        Rect rect = root->rect;
+
+        // generate the outside edges of the root:
+
+        func(rect.min.x, rect.min.y);
+        func(rect.max.x, rect.min.y);
+
+        func(rect.min.x, rect.min.y);
+        func(rect.min.x, rect.max.y);
+
+        func(rect.max.x, rect.max.y);
+        func(rect.min.x, rect.max.y);
+
+        func(rect.max.x, rect.max.y);
+        func(rect.max.x, rect.min.y);
+
+        // generate crosses (two lines splitting the four children)
+        // for all nodes that have children
+        root->gather_crosses(func);
+    }
 
 private:
+    class Node {
+    public:
+        typedef List<Object, &Object::qtree_link> ObjectList;
+
+        Rect rect;
+        vec2 center;
+        QuadTree *qtree;
+        Node *parent;
+        int depth;
+
+        Node *child[4];
+
+        ObjectList objects;
+        int num_objects;
+
+
+        void remove(Object *obj) {
+            obj->qtree_link.unlink();
+            obj->qtree_node = nullptr;
+            --num_objects;
+        }
+
+        int calc_index(vec2 pos) {
+            if (pos.y < center.y)
+                return pos.x < center.x ? 0 : 1;
+            return pos.x < center.x ? 2 : 3;
+        }
+
+        Node *calc_child(vec2 pos) {
+            return child[calc_index(pos)];
+        }
+
+        template <class Func>
+        void query(Rect rect, Func func) {
+            if (child[0]) {
+                if (rect.min.y < child[0]->rect.max.y) {
+                    if (rect.min.x < child[0]->rect.max.x) child[0]->query(rect, func);
+                    if (rect.max.x > child[1]->rect.min.x) child[1]->query(rect, func);
+                }
+                if (rect.max.y > child[2]->rect.min.y) {
+                    if (rect.min.x < child[2]->rect.max.x) child[2]->query(rect, func);
+                    if (rect.max.x > child[3]->rect.min.x) child[3]->query(rect, func);
+                }
+            } else {
+                for (Object *obj : objects) {
+                    if (rect.contains(obj->qtree_position()))
+                        func(obj);
+                }
+            }
+        }
+
+        template <class Func>
+        void query(Rect rect, vec2 pos, float radius, Func func) {
+            if (child[0]) {
+                if (rect.min.y < child[0]->rect.max.y) {
+                    if (rect.min.x < child[0]->rect.max.x) child[0]->query(rect, pos, radius, func);
+                    if (rect.max.x > child[1]->rect.min.x) child[1]->query(rect, pos, radius, func);
+                }
+                if (rect.max.y > child[2]->rect.min.y) {
+                    if (rect.min.x < child[2]->rect.max.x) child[2]->query(rect, pos, radius, func);
+                    if (rect.max.x > child[3]->rect.min.x) child[3]->query(rect, pos, radius, func);
+                }
+            } else {
+                for (Object *obj : objects) {
+                    vec2 d = obj->qtree_position() - pos;
+                    if (d.x*d.x + d.y*d.y < radius*radius)
+                        func(obj);
+                }
+            }
+        }
+
+        template <class Func>
+        void gather_crosses(Func func) {
+            if (!child[0])
+                return;
+
+            func(child[2]->rect.min.x, child[2]->rect.min.y);
+            func(child[1]->rect.max.x, child[1]->rect.max.y);
+
+            func(child[1]->rect.min.x, child[1]->rect.min.y);
+            func(child[2]->rect.max.x, child[2]->rect.max.y);
+
+            for (int i = 0; i < 4; ++i)
+                child[i]->gather_crosses(func);
+        }
+    };
+
     // non-copyable
     QuadTree(const QuadTree &);
     QuadTree &operator=(const QuadTree &);

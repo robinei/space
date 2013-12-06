@@ -278,10 +278,6 @@ void Body::init(EntityManager *m, Entity *e) {
 
 
 
-struct UpdateContext {
-    std::vector<QuadTree::Object *> neighbours;
-};
-
 vec3 limit(vec3 v, float len) {
     if (glm::length(v) > len)
         return glm::normalize(v) * len;
@@ -296,25 +292,43 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
     int team;
     Body *body;
 
+    enum { MAX_FRIENDS  = 4 };
+    Entity *friends[MAX_FRIENDS];
+    float friend_radius;
+
+    Ship() {
+        friend_radius = 50;
+    }
+
     void init(EntityManager *m, Entity *e) override;
 
 
 
     void update(EntityManager *m, float dt) {
-        UpdateContext context;
-
         BodySystem *sys = m->get_system<BodySystem>();
-        sys->quad_tree.query(vec2(body->pos), 50.0f, context.neighbours);
-        //printf("context.neighbours: %d\n", context.neighbours.size());
+
+        memset(friends, 0, sizeof(friends));
+        int num_neightbours = 0;
+        sys->quad_tree.query(vec2(body->pos), friend_radius, [&](QuadTree::Object *obj) mutable {
+            if (num_neightbours < MAX_FRIENDS) {
+                Body *body = static_cast<Body *>(obj);
+                friends[num_neightbours] = body->entity;
+            }
+            num_neightbours++;
+        });
+        if (num_neightbours < MAX_FRIENDS) friend_radius += 0.1f;
+        else if (num_neightbours > MAX_FRIENDS) friend_radius -= 0.1f;
+        if (friend_radius < 1.0f) friend_radius = 1.0f;
+        else if (friend_radius > 50.0f) friend_radius = 50.0f;
 
         vec3 acc(0, 0, 0);
 
-        acc += separation(context) * 1.5f;
-        acc += alignment(context) * 1.0f;
-        acc += cohesion(context) * 1.0f;
+        acc += separation() * 1.5f;
+        acc += alignment() * 1.0f;
+        acc += cohesion() * 1.0f;
 
-        acc += planehug(context) * 1.5f;
-        acc += zseparation(context) * 1.5f;
+        acc += planehug() * 1.5f;
+        acc += zseparation() * 1.5f;
 
         acc += seek(cursor_pos) * 1.0f;
 
@@ -334,18 +348,21 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
         }
     }
 
-    vec3 planehug(UpdateContext &context) {
+    vec3 planehug() {
         vec3 target = body->pos;
         target.z = 0;
         return arrive(target);
     }
 
-    vec3 zseparation(UpdateContext &context) {
+    vec3 zseparation() {
         float sep = 20.0f;
         vec3 sum(0, 0, 0);
         int count = 0;
-        for (auto obj : context.neighbours) {
-            Body *b = static_cast<Body *>(obj);
+        for (int i = 0; i < MAX_FRIENDS; ++i) {
+            Entity *e = friends[i];
+            if (!e) continue;
+
+            Body *b = e->get_component<Body>();
             if (b == body) continue;
             vec3 d = body->pos - b->pos;
             float len = glm::length(d);
@@ -365,12 +382,15 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
         return steer(sum);
     }
 
-    vec3 separation(UpdateContext &context) {
+    vec3 separation() {
         float sep = 20.0f;
         vec3 sum(0, 0, 0);
         int count = 0;
-        for (auto obj : context.neighbours) {
-            Body *b = static_cast<Body *>(obj);
+        for (int i = 0; i < MAX_FRIENDS; ++i) {
+            Entity *e = friends[i];
+            if (!e) continue;
+
+            Body *b = e->get_component<Body>();
             if (b == body) continue;
             vec3 d = body->pos - b->pos;
             d.z = 0;
@@ -387,12 +407,15 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
         return steer(sum);
     }
 
-    vec3 alignment(UpdateContext &context) {
+    vec3 alignment() {
         float neighbordist = 50;
         vec3 sum(0, 0, 0);
         int count = 0;
-        for (auto obj : context.neighbours) {
-            Body *b = static_cast<Body *>(obj);
+        for (int i = 0; i < MAX_FRIENDS; ++i) {
+            Entity *e = friends[i];
+            if (!e) continue;
+
+            Body *b = e->get_component<Body>();
             if (b == body) continue;
             
             Ship *s = b->entity->get_component<Ship>();
@@ -410,12 +433,15 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
         return steer(sum);
     }
 
-    vec3 cohesion(UpdateContext &context) {
+    vec3 cohesion() {
         float neighbordist = 50;
         vec3 sum(0, 0, 0);
         int count = 0;
-        for (auto obj : context.neighbours) {
-            Body *b = static_cast<Body *>(obj);
+        for (int i = 0; i < MAX_FRIENDS; ++i) {
+            Entity *e = friends[i];
+            if (!e) continue;
+
+            Body *b = e->get_component<Body>();
             if (b == body) continue;
 
             Ship *s = b->entity->get_component<Ship>();
@@ -746,7 +772,9 @@ int main(int argc, char *argv[]) {
 
         {
             qtree_lines.clear();
-            body_system.quad_tree.gather_outlines(qtree_lines);
+            body_system.quad_tree.gather_outlines([&](float x, float y) mutable {
+                qtree_lines.push_back(vec2(x, y));
+            });
             if (qtree_lines.size() > qtree_max_vertexes)
                 qtree_lines.resize(qtree_max_vertexes);
             qtree_buf->bind();

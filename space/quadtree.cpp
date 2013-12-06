@@ -8,93 +8,6 @@ enum {
 };
 
 
-
-class Node {
-public:
-    typedef List<QuadTree::Object, &QuadTree::Object::qtree_link> ObjectList;
-
-    Rect rect;
-    vec2 center;
-    QuadTree *qtree;
-    Node *parent;
-    int depth;
-
-    Node *child[4];
-
-    ObjectList objects;
-    int num_objects;
-
-
-    void remove(QuadTree::Object *obj) {
-        obj->qtree_link.unlink();
-        obj->qtree_node = nullptr;
-        --num_objects;
-    }
-
-    int calc_index(vec2 pos) {
-        if (pos.y < center.y)
-            return pos.x < center.x ? 0 : 1;
-        return pos.x < center.x ? 2 : 3;
-    }
-
-    Node *calc_child(vec2 pos) {
-        return child[calc_index(pos)];
-    }
-
-    void query(Rect rect, std::vector<QuadTree::Object *> &result) {
-        if (child[0]) {
-            if (rect.min.y < child[0]->rect.max.y) {
-                if (rect.min.x < child[0]->rect.max.x) child[0]->query(rect, result);
-                if (rect.max.x > child[1]->rect.min.x) child[1]->query(rect, result);
-            }
-            if (rect.max.y > child[2]->rect.min.y) {
-                if (rect.min.x < child[2]->rect.max.x) child[2]->query(rect, result);
-                if (rect.max.x > child[3]->rect.min.x) child[3]->query(rect, result);
-            }
-        } else {
-            for (QuadTree::Object *obj : objects) {
-                if (rect.contains(obj->qtree_position()))
-                    result.push_back(obj);
-            }
-        }
-    }
-
-    void query(Rect rect, vec2 pos, float radius, std::vector<QuadTree::Object *> &result) {
-        if (child[0]) {
-            if (rect.min.y < child[0]->rect.max.y) {
-                if (rect.min.x < child[0]->rect.max.x) child[0]->query(rect, pos, radius, result);
-                if (rect.max.x > child[1]->rect.min.x) child[1]->query(rect, pos, radius, result);
-            }
-            if (rect.max.y > child[2]->rect.min.y) {
-                if (rect.min.x < child[2]->rect.max.x) child[2]->query(rect, pos, radius, result);
-                if (rect.max.x > child[3]->rect.min.x) child[3]->query(rect, pos, radius, result);
-            }
-        } else {
-            for (QuadTree::Object *obj : objects) {
-                vec2 d = obj->qtree_position() - pos;
-                if (d.x*d.x + d.y*d.y < radius*radius)
-                    result.push_back(obj);
-            }
-        }
-    }
-
-    void gather_crosses(std::vector<vec2> &lines) {
-        if (!child[0])
-            return;
-
-        lines.push_back(child[2]->rect.min);
-        lines.push_back(child[1]->rect.max);
-
-        lines.push_back(child[1]->rect.min);
-        lines.push_back(child[2]->rect.max);
-
-        for (int i = 0; i < 4; ++i)
-            child[i]->gather_crosses(lines);
-    }
-};
-
-
-
 void QuadTree::Object::qtree_remove() {
     if (qtree_node)
         qtree_node->qtree->remove(this);
@@ -214,40 +127,7 @@ void QuadTree::maybe_merge_with_siblings(Node *n) {
     maybe_merge_with_siblings(parent);
 }
 
-void QuadTree::query(Rect rect, std::vector<Object *> &result) {
-    root->query(rect, result);
-}
-
-void QuadTree::query(vec2 pos, float radius, std::vector<Object *> &result) {
-    Rect rect;
-    rect.min = pos - vec2(radius, radius);
-    rect.max = pos + vec2(radius, radius);
-    root->query(rect, pos, radius, result);
-}
-
-void QuadTree::gather_outlines(std::vector<vec2> &lines) {
-    Rect rect = root->rect;
-    
-    // generate the outside edges of the root:
-
-    lines.push_back(vec2(rect.min.x, rect.min.y));
-    lines.push_back(vec2(rect.max.x, rect.min.y));
-
-    lines.push_back(vec2(rect.min.x, rect.min.y));
-    lines.push_back(vec2(rect.min.x, rect.max.y));
-
-    lines.push_back(vec2(rect.max.x, rect.max.y));
-    lines.push_back(vec2(rect.min.x, rect.max.y));
-
-    lines.push_back(vec2(rect.max.x, rect.max.y));
-    lines.push_back(vec2(rect.max.x, rect.min.y));
-
-    // generate crosses (two lines splitting the four children)
-    // for all nodes that have children
-    root->gather_crosses(lines);
-}
-
-Node *QuadTree::new_node(Node *parent, Rect rect) {
+QuadTree::Node *QuadTree::new_node(Node *parent, Rect rect) {
     Node *n = pool.create();
     n->rect = rect;
     n->center = rect.center();
