@@ -85,7 +85,8 @@ public:
 	void bind();
 	void unbind();
 
-	void render();
+    void render(int offset = 0, int count = 0);
+    void render_indexed(int offset = 0, int count = 0);
 
 protected:
 	Mesh(GLenum mode, int num_vertex_buffers);

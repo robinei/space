@@ -44,11 +44,12 @@ public:
     }
 
     bool insert(T val) {
-        unsigned int h = (hash_a * Key::key(val)) >> LowBits;
+        unsigned int key = Key::key(val);
+        unsigned int h = (hash_a * key) >> LowBits;
         unsigned int p = 0;
         do {
             unsigned int i = (h + p) & (NumBuckets - 1);
-            if (buckets[i] == T()) {
+            if (buckets[i] == T() || Key::key(buckets[i]) == key) {
                 buckets[i] = val;
                 if (p > max_probe)
                     max_probe = p; // this probe was the longest yet

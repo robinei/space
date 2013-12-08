@@ -90,7 +90,9 @@
     <ClCompile Include="program.cpp" />
     <ClCompile Include="quadtree.cpp" />
     <ClCompile Include="renderqueue.cpp" />
+    <ClCompile Include="statecontext.cpp" />
     <ClCompile Include="stb_image.c" />
+    <ClCompile Include="texture.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="arena.h" />
@@ -110,6 +112,8 @@
     <ClInclude Include="quadtree.h" />
     <ClInclude Include="refcounted.h" />
     <ClInclude Include="renderqueue.h" />
+    <ClInclude Include="statecontext.h" />
+    <ClInclude Include="texture.h" />
     <ClInclude Include="weakref.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

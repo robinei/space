@@ -190,11 +190,27 @@ void Mesh::unbind() {
 	glBindVertexArray(0);
 }
 
-void Mesh::render() {
-	if (_index_buffer)
-		glDrawElements(_mode, _num_indexes, _index_type, 0);
-	else
-		glDrawArrays(_mode, 0, _num_vertexes);
+void Mesh::render(int offset, int count) {
+    assert(_num_vertexes > 0);
+    if (!count)
+        count = _num_vertexes;
+    assert(offset + count <= _num_vertexes);
+    glDrawArrays(_mode, offset, count);
 }
 
+void Mesh::render_indexed(int offset, int count) {
+    assert(_index_buffer);
+    assert(_num_indexes > 0);
+    if (!count)
+        count = _num_indexes;
+    assert(offset + count <= _num_indexes);
+    int prim_size = 0;
+    switch (_index_type) {
+    case GL_UNSIGNED_BYTE: prim_size = 1; break;
+    case GL_UNSIGNED_SHORT: prim_size = 2; break;
+    case GL_UNSIGNED_INT: prim_size = 4; break;
+    default: assert(0); break;
+    }
+    glDrawElements(_mode, count, _index_type, reinterpret_cast<void *>(offset*prim_size));
+}
 

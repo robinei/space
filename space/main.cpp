@@ -19,6 +19,8 @@
 #include "program.h"
 #include "bufferobject.h"
 #include "mesh.h"
+#include "texture.h"
+#include "statecontext.h"
 #include "fpscamera.h"
 #include "quadtree.h"
 #include "renderqueue.h"
@@ -48,10 +50,10 @@ static RenderQueue renderqueue;
 static Program::Ref ship_program;
 static Program::Ref qtree_program;
 static Mesh::Ref ship_mesh;
+static Mesh::Ref asteroid_mesh;
+static float ship_radius;
+static float asteroid_radius;
 
-static mat4 projection_matrix;
-static mat4 view_matrix;
-static vec3 light_dir;
 static vec3 cursor_pos;
 
 
@@ -81,12 +83,14 @@ struct MeshFileHeader {
 #include <assimp/postprocess.h>
 
 
-static Mesh::Ref do_load_mesh(aiMesh *aimesh) {
+static Mesh::Ref do_load_mesh(aiMesh *aimesh, float &radius_out, bool want_normals) {
     std::vector<GLfloat> verts;
     std::vector<GLuint> indices;
 
     assert(aimesh->HasPositions());
-    assert(aimesh->HasNormals());
+    if (want_normals) {
+        assert(aimesh->HasNormals());
+    }
 
     for (unsigned int i = 0; i < aimesh->mNumVertices; ++i) {
         aiVector3D v = aimesh->mVertices[i];
@@ -94,10 +98,16 @@ static Mesh::Ref do_load_mesh(aiMesh *aimesh) {
         verts.push_back(v.y);
         verts.push_back(v.z);
 
-        aiVector3D n = aimesh->mNormals[i];
-        verts.push_back(n.x);
-        verts.push_back(n.y);
-        verts.push_back(n.z);
+        if (want_normals) {
+            aiVector3D n = aimesh->mNormals[i];
+            verts.push_back(n.x);
+            verts.push_back(n.y);
+            verts.push_back(n.z);
+        }
+
+        float len = v.Length();
+        if (len > radius_out)
+            radius_out = len;
     }
 
     for (unsigned int i = 0; i < aimesh->mNumFaces; ++i) {
@@ -111,7 +121,8 @@ static Mesh::Ref do_load_mesh(aiMesh *aimesh) {
 
     VertexFormat::Ref format = VertexFormat::create();
     format->add(VertexFormat::Position, 0, 3, GL_FLOAT);
-    format->add(VertexFormat::Normal, 1, 3, GL_FLOAT);
+    if (want_normals)
+        format->add(VertexFormat::Normal, 1, 3, GL_FLOAT);
 
     BufferObject::Ref index_buffer = BufferObject::create();
     index_buffer->bind();
@@ -130,18 +141,18 @@ static Mesh::Ref do_load_mesh(aiMesh *aimesh) {
     return mesh;
 }
 
-Mesh::Ref load_mesh(const std::string &filename) {
+Mesh::Ref load_mesh(const std::string &filename, float &radius_out, bool want_normals=true) {
     Assimp::Importer importer;
 
-    const aiScene* scene = importer.ReadFile(filename,
-                                             aiProcess_Triangulate |
-                                             aiProcess_SortByPType |
-                                             aiProcess_JoinIdenticalVertices |
-                                             aiProcess_OptimizeMeshes |
-                                             aiProcess_OptimizeGraph |
-                                             aiProcess_PreTransformVertices |
-                                             aiProcess_GenSmoothNormals
-                                             );
+    unsigned int flags = aiProcess_Triangulate |
+        aiProcess_SortByPType |
+        aiProcess_JoinIdenticalVertices |
+        aiProcess_OptimizeMeshes |
+        aiProcess_OptimizeGraph |
+        aiProcess_PreTransformVertices;
+    if (want_normals)
+        flags |= aiProcess_GenSmoothNormals;
+    const aiScene* scene = importer.ReadFile(filename, flags);
 
     if (!scene) {
         printf("import error: %s\n", importer.GetErrorString());
@@ -150,11 +161,12 @@ Mesh::Ref load_mesh(const std::string &filename) {
 
     printf("num meshes: %d\n\n", scene->mNumMeshes);
 
+    radius_out = 0;
     for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
         aiMesh *aimesh = scene->mMeshes[i];
         printf("  %s -\tverts: %d,\tfaces: %d,\tmat: %d,\thas colors: %d\n", aimesh->mName.C_Str(), aimesh->mNumVertices, aimesh->mNumFaces, aimesh->mMaterialIndex, aimesh->HasVertexColors(0));
 
-        Mesh::Ref mesh = do_load_mesh(aimesh);
+        Mesh::Ref mesh = do_load_mesh(aimesh, radius_out, want_normals);
         if (!mesh)
             continue;
         return mesh;
@@ -167,26 +179,66 @@ Mesh::Ref load_mesh(const std::string &filename) {
 
 
 
+class SkyBox {
+public:
+    SkyBox() {
+        program = Program::create();
+        program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/skybox.vert"));
+        program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/skybox.frag"));
+        program->attrib("in_pos", 0);
+        program->link();
+        program->detach_all();
+
+        const char *paths[6] {
+            "../data/skyboxes/default_right1.jpg",
+            "../data/skyboxes/default_left2.jpg",
+            "../data/skyboxes/default_top3.jpg",
+            "../data/skyboxes/default_bottom4.jpg",
+            "../data/skyboxes/default_front5.jpg",
+            "../data/skyboxes/default_back6.jpg"
+        };
+        texture = Texture::create_cubemap(paths);
+
+        float radius;
+        mesh = load_mesh("../data/meshes/sphere.ply", radius, false);
+        printf("skybox radius: %f\n", radius);
+        printf("skybox vertexes: %d\n", mesh->vertex_buffer(0)->size() / (sizeof(float)* 3));
+    }
+
+    void render(mat4 view_matrix, mat4 projection_matrix) {
+        // remove translation element from view matrix
+        // (so we render the mesh centered around the camera)
+        view_matrix[3].x = 0;
+        view_matrix[3].y = 0;
+        view_matrix[3].z = 0;
+
+        StateContext context;
+        context.disable(GL_CULL_FACE);
+        context.depth_func(GL_ALWAYS);
+        context.depth_mask(GL_FALSE);
+        
+        program->bind();
+        program->uniform("m_pvm", projection_matrix * view_matrix);
+        program->uniform("tex", 0);
+        texture->bind(0, GL_TEXTURE_CUBE_MAP);
+        mesh->bind();
+        mesh->render_indexed();
+        mesh->unbind();
+        texture->unbind();
+        program->unbind();
+    }
+
+private:
+    Program::Ref program;
+    Texture::Ref texture;
+    Mesh::Ref mesh;
+};
 
 
-static void LoadTriangle() {
-    ship_mesh = load_mesh("../data/meshes/harv.ply");
 
-    ship_program = Program::create();
-    ship_program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/simple.vert"));
-    ship_program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/simple.frag"));
-    ship_program->attrib("in_pos", 0);
-    ship_program->attrib("in_normal", 1);
-    ship_program->link();
-    ship_program->detach_all();
 
-    qtree_program = Program::create();
-    qtree_program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/pos.vert"));
-    qtree_program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/color.frag"));
-    qtree_program->attrib("in_pos", 0);
-    qtree_program->link();
-    qtree_program->detach_all();
-}
+
+
 
 
 
@@ -249,6 +301,8 @@ struct Body :
 {
     vec3 pos;
     vec3 vel;
+    vec3 move;
+    float radius;
     Entity *entity;
 
     void qtree_position(float &x, float &y) override {
@@ -261,9 +315,11 @@ struct Body :
 
 class BodySystem : public PoolSystem<Body, 'BODY'> {
 public:
-    BodySystem() : quad_tree(-1000, -1000, 1000, 1000, 7) {}
+    BodySystem() : quad_tree(-1000, -1000, 1000, 1000, 8) {}
 
     QuadTree quad_tree;
+
+    void update(float dt);
 };
 
 void Body::init(EntityManager *m, Entity *e) {
@@ -271,6 +327,7 @@ void Body::init(EntityManager *m, Entity *e) {
     sys->quad_tree.insert(this);
     entity = e;
 }
+
 
 
 
@@ -297,65 +354,20 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
     Entity *friends[MAX_FRIENDS];
     float friend_radius;
 
+    enum { MAX_CLOSEST = 4 };
+    Entity *closest[MAX_CLOSEST];
+    float closest_radius;
+
     Ship() {
         friend_radius = 50;
+        closest_radius = 50;
     }
 
     void init(EntityManager *m, Entity *e) override;
 
 
 
-    void update(EntityManager *m, float dt) {
-        BodySystem *sys = m->get_system<BodySystem>();
-
-        memset(friends, 0, sizeof(friends));
-        int num_neightbours = 0;
-        vec2 p(body->pos);
-        float friend_radius_squared = friend_radius*friend_radius;
-        sys->quad_tree.query(p.x - friend_radius, p.y - friend_radius,
-                             p.x + friend_radius, p.y + friend_radius,
-                             [&](QuadTree::Object *obj) mutable 
-        {
-            Body *b = static_cast<Body *>(obj);
-            vec2 d = vec2(b->pos) - p;
-            float dist_squared = d.x*d.x + d.y*d.y;
-            if (dist_squared > friend_radius_squared)
-                return;
-            if (num_neightbours < MAX_FRIENDS)
-                friends[num_neightbours] = b->entity;
-            num_neightbours++;
-        });
-        if (num_neightbours < MAX_FRIENDS) friend_radius += 0.1f;
-        else if (num_neightbours > MAX_FRIENDS) friend_radius -= 0.1f;
-        if (friend_radius < 1.0f) friend_radius = 1.0f;
-        else if (friend_radius > 50.0f) friend_radius = 50.0f;
-
-        vec3 acc(0, 0, 0);
-
-        acc += separation() * 1.5f;
-        acc += alignment() * 1.0f;
-        acc += cohesion() * 1.0f;
-
-        acc += planehug() * 1.5f;
-        acc += zseparation() * 1.5f;
-
-        acc += seek(cursor_pos) * 1.0f;
-
-        body->vel += acc * dt;
-        body->vel = limit(body->vel, maxspeed);
-
-        body->pos += body->vel * dt;
-        //pos.z = 0;
-
-        body->qtree_update();
-
-        vec3 v = glm::normalize(body->vel);
-        float a = glm::angle(dir, v);
-        if (fabsf(a) > 0.001f) {
-            vec3 axis(glm::cross(dir, v));
-            dir = glm::normalize(dir * glm::angleAxis(glm::min(45.0f * dt, a), axis));
-        }
-    }
+    void update(EntityManager *m, float dt);
 
     vec3 planehug() {
         vec3 target = body->pos;
@@ -367,12 +379,11 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
         float sep = 20.0f;
         vec3 sum(0, 0, 0);
         int count = 0;
-        for (int i = 0; i < MAX_FRIENDS; ++i) {
-            Entity *e = friends[i];
+        for (int i = 0; i < MAX_CLOSEST; ++i) {
+            Entity *e = closest[i];
             if (!e) continue;
 
             Body *b = e->get_component<Body>();
-            if (b == body) continue;
             vec3 d = body->pos - b->pos;
             float len = glm::length(d);
             if (len > sep || len <= 0.00001f) continue;
@@ -395,12 +406,11 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
         float sep = 20.0f;
         vec3 sum(0, 0, 0);
         int count = 0;
-        for (int i = 0; i < MAX_FRIENDS; ++i) {
-            Entity *e = friends[i];
+        for (int i = 0; i < MAX_CLOSEST; ++i) {
+            Entity *e = closest[i];
             if (!e) continue;
 
             Body *b = e->get_component<Body>();
-            if (b == body) continue;
             vec3 d = body->pos - b->pos;
             d.z = 0;
             float len = glm::length(d);
@@ -425,8 +435,6 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
             if (!e) continue;
 
             Body *b = e->get_component<Body>();
-            if (b == body) continue;
-            
             Ship *s = b->entity->get_component<Ship>();
             if (s->team != team) continue;
             
@@ -451,8 +459,6 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
             if (!e) continue;
 
             Body *b = e->get_component<Body>();
-            if (b == body) continue;
-
             Ship *s = b->entity->get_component<Ship>();
             if (s->team != team) continue;
             
@@ -509,42 +515,11 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
         m[2] = vec4(up, 0);
         return m;
     }
-
-
-    void render(RenderQueue *renderqueue) {
-        mat4 model = glm::translate(body->pos) * calc_rotation_matrix();
-        mat4 vm = view_matrix * model;
-        mat4 pvm = projection_matrix * vm;
-        mat3 normal = glm::inverseTranspose(mat3(vm));
-
-        auto cmd = renderqueue->add_command(ship_program, ship_mesh);
-        cmd->add_uniform("m_pvm", pvm);
-        cmd->add_uniform("m_vm", vm);
-        cmd->add_uniform("m_normal", normal);
-        cmd->add_uniform("light_dir", light_dir);
-        if (team == 0) {
-            cmd->add_uniform("mat_ambient", vec4(0.25f, 0.25f, 0.25f, 1));
-            cmd->add_uniform("mat_diffuse", vec4(0.4f, 0.4f, 0.4f, 1));
-            cmd->add_uniform("mat_specular", vec4(0.774597f, 0.774597f, 0.774597f, 1));
-            cmd->add_uniform("mat_shininess", 76.8f);
-        } else {
-            cmd->add_uniform("mat_ambient", vec4(0.329412f, 0.223529f, 0.027451f, 1.0f));
-            cmd->add_uniform("mat_diffuse", vec4(0.780392f, 0.568627f, 0.113725f, 1.0f));
-            cmd->add_uniform("mat_specular", vec4(0.992157f, 0.941176f, 0.807843f, 1.0f));
-            cmd->add_uniform("mat_shininess", 27.89743616f);
-        }
-    }
 };
 
 class ShipSystem : public PoolSystem<Ship, 'SHIP'> {
 public:
     void update(EntityManager *m, float dt);
-
-    void render(RenderQueue *renderqueue) {
-        for (Ship *ship : *this) {
-            ship->render(renderqueue);
-        }
-    }
 };
 
 void Ship::init(EntityManager *m, Entity *e) {
@@ -561,6 +536,170 @@ void ShipSystem::update(EntityManager *m, float dt) {
 
 
 
+class SimpleRenderable : public PoolComponent<SimpleRenderable, 'SRND', class SimpleRenderableSystem> {
+public:
+    mat4 model_matrix;
+
+    vec4 ambient_color;
+    vec4 diffuse_color;
+    vec4 specular_color;
+    float shininess;
+
+    Program::Ref program;
+    Mesh::Ref mesh;
+};
+
+class SimpleRenderableSystem : public PoolSystem<SimpleRenderable, 'SRND'> {
+public:
+    void render(RenderQueue *renderqueue, mat4 view_matrix, mat4 projection_matrix) {
+        for (SimpleRenderable *r : *this) {
+            mat4 vm = view_matrix * r->model_matrix;
+            mat4 pvm = projection_matrix * vm;
+            mat3 normal = glm::inverseTranspose(mat3(vm));
+
+            auto cmd = renderqueue->add_command(r->program, r->mesh);
+            cmd->add_uniform("m_pvm", pvm);
+            cmd->add_uniform("m_vm", vm);
+            cmd->add_uniform("m_normal", normal);
+            cmd->add_uniform("mat_ambient", r->ambient_color);
+            cmd->add_uniform("mat_diffuse", r->diffuse_color);
+            cmd->add_uniform("mat_specular", r->specular_color);
+            cmd->add_uniform("mat_shininess", r->shininess);
+        }
+    }
+};
+
+/*
+class Doodad : public PoolComponent<Doodad, 'DOOD', class DoodadSystem> {
+public:
+};
+
+class DoodadSystem : public PoolSystem<Doodad, 'DOOD'> {
+    void update() {
+
+    }
+};
+*/
+
+void BodySystem::update(float dt) {
+    /*for (Body *b : *this) {
+        Entity *e = b->entity;
+        Ship *s = e->get_component<Ship>();
+        if (!s)
+            continue;
+
+        for (int i = 0; i < Ship::MAX_CLOSEST; ++i) {
+            Entity *e2 = s->closest[i];
+            if (!e2)
+                continue;
+            Body *b2 = e2->get_component<Body>();
+            if (!b2)
+                continue;
+
+            vec3 d = b2->pos - b->pos;
+            float radius = b->radius + b2->radius;
+            if (d.x*d.x + d.y*d.y > radius*radius)
+                continue;
+
+            puts("collision");
+            Plane plane(glm::normalize(d));
+            b->move = plane.project(b->move);
+            //b2->move = plane.project(b2->move);
+        }
+    }*/
+    for (Body *b : *this) {
+        b->pos += b->move;
+    }
+}
+
+static float adjust_query_radius(float radius, int num_found, int maximum) {
+    if (num_found < maximum) radius += 0.1f;
+    else if (num_found > maximum) radius -= 0.1f;
+    return clamp(radius, 1.0f, 50.0f);
+}
+
+void Ship::update(EntityManager *m, float dt) {
+    BodySystem *sys = m->get_system<BodySystem>();
+    Entity *entity = body->entity;
+
+    int num_friends = 0;
+    int num_closest = 0;
+    memset(friends, 0, sizeof(friends));
+    memset(closest, 0, sizeof(closest));
+
+    float friend_radius_squared = friend_radius*friend_radius;
+    float closest_radius_squared = closest_radius*closest_radius;
+    float query_radius = std::max(friend_radius, closest_radius);
+    
+    vec2 p(body->pos);
+
+    sys->quad_tree.query(p.x - query_radius, p.y - query_radius,
+                         p.x + query_radius, p.y + query_radius,
+                         [&](QuadTree::Object *obj) mutable
+    {
+        Body *b = static_cast<Body *>(obj);
+        if (b == body)
+            return;
+        vec2 d = vec2(b->pos) - p;
+        float dist_squared = d.x*d.x + d.y*d.y;
+
+        if (dist_squared <= friend_radius_squared) {
+            Ship *s = b->entity->get_component<Ship>();
+            if (s && s->team == team) {
+                if (num_friends < MAX_FRIENDS)
+                    friends[num_friends] = b->entity;
+                num_friends++;
+            }
+        }
+
+        if (dist_squared <= closest_radius_squared) {
+            if (num_closest < MAX_CLOSEST)
+                closest[num_closest] = b->entity;
+            num_closest++;
+        }
+    });
+
+    friend_radius = adjust_query_radius(friend_radius, num_friends, MAX_FRIENDS);
+    closest_radius = adjust_query_radius(closest_radius, num_closest, MAX_CLOSEST);
+
+
+
+    vec3 acc(0, 0, 0);
+
+    acc += separation() * 1.5f;
+    acc += alignment() * 1.0f;
+    acc += cohesion() * 1.0f;
+
+    acc += planehug() * 1.5f;
+    acc += zseparation() * 1.5f;
+
+    acc += seek(cursor_pos) * 1.0f;
+
+    body->vel += acc * dt;
+    body->vel = limit(body->vel, maxspeed);
+
+    body->move = body->vel * dt;
+    //pos.z = 0;
+
+    body->qtree_update();
+
+    vec3 v = glm::normalize(body->vel);
+    float a = glm::angle(dir, v);
+    if (fabsf(a) > 0.001f) {
+        vec3 axis(glm::cross(dir, v));
+        dir = glm::normalize(dir * glm::angleAxis(glm::min(45.0f * dt, a), axis));
+    }
+
+
+    SimpleRenderable *r = entity->get_component<SimpleRenderable>();
+    if (r) {
+        r->model_matrix = glm::translate(body->pos) * calc_rotation_matrix();
+    }
+}
+
+
+
+
 
 
 
@@ -570,6 +709,7 @@ static void do_spawn_boid(EntityManager *m, vec3 pos) {
     Body *b = m->add_component<Body>(e);
     b->pos = pos;
     b->vel = vec3(glm::diskRand(10.0f), 0.0f);
+    b->radius = ship_radius;
 
     Ship *s = m->add_component<Ship>(e);
     s->dir = glm::normalize(b->vel);
@@ -577,6 +717,43 @@ static void do_spawn_boid(EntityManager *m, vec3 pos) {
     s->maxforce = 1;
     s->team = rand() % 2;
     
+    SimpleRenderable *r = m->add_component<SimpleRenderable>(e);
+    r->mesh = ship_mesh;
+    r->program = ship_program;
+    if (s->team == 0) {
+        r->ambient_color = vec4(0.25f, 0.25f, 0.25f, 1);
+        r->diffuse_color = vec4(0.4f, 0.4f, 0.4f, 1);
+        r->specular_color = vec4(0.774597f, 0.774597f, 0.774597f, 1);
+        r->shininess = 76.8f;
+    } else {
+        r->ambient_color = vec4(0.329412f, 0.223529f, 0.027451f, 1.0f);
+        r->diffuse_color = vec4(0.780392f, 0.568627f, 0.113725f, 1.0f);
+        r->specular_color = vec4(0.992157f, 0.941176f, 0.807843f, 1.0f);
+        r->shininess = 27.89743616f;
+    }
+
+    m->optimize_entity(e);
+    m->init_entity(e);
+}
+
+static void add_asteroid(EntityManager *m, vec3 pos) {
+    Entity *e = m->create_entity();
+
+    Body *b = m->add_component<Body>(e);
+    b->pos = pos;
+    b->radius = asteroid_radius;
+
+    SimpleRenderable *r = m->add_component<SimpleRenderable>(e);
+    r->model_matrix = glm::translate(pos) * glm::scale(vec3(10, 10, 10));
+    r->mesh = asteroid_mesh;
+    r->program = ship_program;
+    r->ambient_color = vec4(0.25f, 0.25f, 0.25f, 1);
+    r->diffuse_color = vec4(0.4f, 0.4f, 0.4f, 1);
+    r->specular_color = vec4(0.774597f, 0.774597f, 0.774597f, 1);
+    //r->shininess = 76.8f;
+    r->shininess = 160.8f;
+
+    m->optimize_entity(e);
     m->init_entity(e);
 }
 
@@ -597,11 +774,14 @@ static void do_spawn_boid(EntityManager *m, vec3 pos) {
 
 
 
+SDL_DisplayMode mode;
+mat4 projection_matrix, view_matrix;
 
-
-
-
-
+static vec3 screen_to_world(int x, int y) {
+    vec3 p0 = glm::unProject(vec3(x, mode.h - y - 1, 0), view_matrix, projection_matrix, vec4(0, 0, mode.w, mode.h));
+    vec3 p1 = glm::unProject(vec3(x, mode.h - y - 1, 1), view_matrix, projection_matrix, vec4(0, 0, mode.w, mode.h));
+    return Plane::XY().ray_intersect(p0, p1);
+}
 
 
 
@@ -633,7 +813,6 @@ int main(int argc, char *argv[]) {
     if (!ok)
         die("SDL_GL_SetAttribute() error: %s", SDL_GetError());
 
-    SDL_DisplayMode mode;
     if (SDL_GetDesktopDisplayMode(0, &mode) < 0)
         die("SDL_GetDesktopDisplayMode() error: %s", SDL_GetError());
     //mode.w = 1920, mode.h = 1080;
@@ -669,14 +848,33 @@ int main(int argc, char *argv[]) {
             printf("SDL_GL_SetSwapInterval(1) failed: %s\n", SDL_GetError());
     }
 
-    glEnable(GL_MULTISAMPLE);
+    StateContext context;
+    context.enable(GL_MULTISAMPLE);
 
     try {
-        LoadTriangle();
+        ship_mesh = load_mesh("../data/meshes/harv.ply", ship_radius);
+        asteroid_mesh = load_mesh("../data/meshes/asteroid.ply", asteroid_radius);
+        asteroid_radius *= 10;
+        printf("ship_radius: %f\n", ship_radius);
+        printf("asteroid_radius: %f\n", asteroid_radius);
     } catch (const std::exception &e) {
         die("error: %s", e.what());
     }
 
+    ship_program = Program::create();
+    ship_program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/simple.vert"));
+    ship_program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/simple.frag"));
+    ship_program->attrib("in_pos", 0);
+    ship_program->attrib("in_normal", 1);
+    ship_program->link();
+    ship_program->detach_all();
+
+    qtree_program = Program::create();
+    qtree_program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/pos.vert"));
+    qtree_program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/color.frag"));
+    qtree_program->attrib("in_pos", 0);
+    qtree_program->link();
+    qtree_program->detach_all();
 
     std::vector<vec2> qtree_lines;
     const int qtree_max_vertexes = 16000;
@@ -710,25 +908,33 @@ int main(int argc, char *argv[]) {
 
     BodySystem body_system;
     ShipSystem ship_system;
+    SimpleRenderableSystem simple_renderable_system;
     EntityManager entity_manager;
     entity_manager.add_system(&body_system);
     entity_manager.add_system(&ship_system);
+    entity_manager.add_system(&simple_renderable_system);
+    entity_manager.optimize_systems();
 
     for (int i = 0; i < 40; ++i) {
         do_spawn_boid(&entity_manager, vec3(glm::diskRand(200.0f), 0.0f));
     }
+    for (int i = 0; i < 10; ++i) {
+        add_asteroid(&entity_manager, vec3(glm::diskRand(400.0f), 0.0f));
+    }
 
-    vec3 camera_pos(0, -5, 20);
-    vec3 camera_right(1, -1, 0);
-    vec3 camera_forward(1, 1, 0);
+    vec3 camera_focus(0, 0, 0);
+    float camera_dist = 100;
+    vec3 camera_dir = glm::normalize(vec3(1, 1, 1));
     float aspect_ratio = (float)mode.w / (float)mode.h;
-    bool orthogonal_projection = true;
-
-    light_dir = glm::normalize(vec3(1, 0, 3));
+    bool orthogonal_projection = false;
+    vec3 light_dir = glm::normalize(vec3(1, 0, 3));
 
     const Uint8 *keys = SDL_GetKeyboardState(0);
     Uint32 prevticks = SDL_GetTicks();
     bool running = true;
+    bool rotating = false;
+
+    SkyBox skybox;
 
     while (running) {
         //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -743,6 +949,14 @@ int main(int argc, char *argv[]) {
         int mx = 0, my = 0;
         SDL_GetMouseState(&mx, &my);
 
+        vec3 camera_pos = camera_focus + camera_dir * camera_dist;
+        
+        vec3 camera_forward = -camera_dir;
+        camera_forward.z = 0;
+        camera_forward = glm::normalize(camera_forward);
+
+        vec3 camera_right = glm::cross(vec3(0, 0, 1), camera_forward);
+
         if (orthogonal_projection) {
             float dim = camera_pos.z;
             projection_matrix = glm::ortho(-dim*aspect_ratio, dim*aspect_ratio,
@@ -753,18 +967,16 @@ int main(int argc, char *argv[]) {
         }
 
         view_matrix = glm::lookAt(camera_pos,
-                                  camera_pos + vec3(1, 1, -1),
+                                  camera_focus,
                                   vec3(0, 0, 1));
+
+        vec3 screen_center = screen_to_world(mode.w / 2, mode.h / 2);
+        cursor_pos = screen_to_world(mx, my);
 
         //light_dir = glm::normalize(glm::angleAxis(dt*10.0f, vec3(0, 0, 1)) * light_dir);
 
-        {
-            vec3 p0 = glm::unProject(vec3(mx, mode.h - my - 1, 0), view_matrix, projection_matrix, vec4(0, 0, mode.w, mode.h));
-            vec3 p1 = glm::unProject(vec3(mx, mode.h - my - 1, 1), view_matrix, projection_matrix, vec4(0, 0, mode.w, mode.h));
-            cursor_pos = Plane::XY().ray_intersect(p0, p1);
-        }
-
         ship_system.update(&entity_manager, dt);
+        body_system.update(dt);
         entity_manager.update();
 
 
@@ -772,12 +984,18 @@ int main(int argc, char *argv[]) {
         // Rendering:
         //////////////////////////////////////////////////////////////////////////////////////////////////
 
+        ship_program->bind();
+        ship_program->uniform("light_dir", light_dir);
+        ship_program->unbind();
+
         glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-        glEnable(GL_DEPTH_TEST);
-        glDepthFunc(GL_LESS);
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
+        context.enable(GL_DEPTH_TEST);
+        context.depth_func(GL_LESS);
+        context.enable(GL_CULL_FACE);
+        context.cull_face(GL_BACK);
+
+        skybox.render(view_matrix, projection_matrix);
 
         {
             qtree_lines.clear();
@@ -792,11 +1010,13 @@ int main(int argc, char *argv[]) {
             qtree_mesh->set_num_vertexes(qtree_lines.size());
 
             auto cmd = renderqueue.add_command(qtree_program, qtree_mesh);
+            cmd->indexed = false;
             cmd->add_uniform("m_pvm", projection_matrix * view_matrix);
             cmd->add_uniform("color", vec4(0.2f, 0.2f, 0.2f, 1));
-            glDepthMask(GL_FALSE);
+
+            StateContext context;
+            context.depth_mask(GL_FALSE);
             renderqueue.flush();
-            glDepthMask(GL_TRUE);
         }
 
         {
@@ -815,12 +1035,13 @@ int main(int argc, char *argv[]) {
             vlines_mesh->set_num_vertexes(vlines_lines.size());
 
             auto cmd = renderqueue.add_command(qtree_program, vlines_mesh);
+            cmd->indexed = false;
             cmd->add_uniform("m_pvm", projection_matrix * view_matrix);
             cmd->add_uniform("color", vec4(0.5f, 0.5f, 0.5f, 1));
             renderqueue.flush();
         }
 
-        ship_system.render(&renderqueue);
+        simple_renderable_system.render(&renderqueue, view_matrix, projection_matrix);
         renderqueue.flush();
         
         SDL_GL_SwapWindow(window);
@@ -833,14 +1054,14 @@ int main(int argc, char *argv[]) {
         float speed = 1.0;
         float sensitivity = 0.01f;
 
-        if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A] || mx == 0)
-            camera_pos -= camera_right*camera_pos.z*dt*speed;
-        if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D] || mx == mode.w - 1)
-            camera_pos += camera_right*camera_pos.z*dt*speed;
-        if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W] || my == 0)
-            camera_pos += camera_forward*camera_pos.z*dt*speed;
-        if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S] || my == mode.h - 1)
-            camera_pos -= camera_forward*camera_pos.z*dt*speed;
+        if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A] || (mx == 0 && !rotating))
+            camera_focus += camera_right*camera_pos.z*dt*speed;
+        if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D] || (mx == mode.w - 1 && !rotating))
+            camera_focus -= camera_right*camera_pos.z*dt*speed;
+        if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W] || (my == 0 && !rotating))
+            camera_focus += camera_forward*camera_pos.z*dt*speed;
+        if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S] || (my == mode.h - 1 && !rotating))
+            camera_focus -= camera_forward*camera_pos.z*dt*speed;
 
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -854,21 +1075,40 @@ int main(int argc, char *argv[]) {
                     orthogonal_projection = !orthogonal_projection;
                 break;
             case SDL_MOUSEMOTION:
+                if (rotating) {
+                    ;
+                    float angle_h = -360.f * (float)event.motion.xrel / (float)mode.w;
+                    camera_dir = glm::angleAxis(angle_h, vec3(0, 0, 1)) * camera_dir;
+
+                    float angle_v = 360.f * (float)event.motion.yrel / (float)mode.h;
+                    camera_dir = glm::angleAxis(angle_v, camera_right) * camera_dir;
+
+                    camera_dir = glm::normalize(camera_dir);
+                }
                 break;
             case SDL_MOUSEWHEEL: {
-                vec3 d = (cursor_pos - camera_pos) * (0.4f * event.wheel.y);
-                vec3 p = camera_pos + d;
-                float min_z = 10.0f;
-                float max_z = 1000.0f;
-                if (p.z < min_z)
-                    p = Plane::XY(-min_z).ray_intersect(camera_pos, cursor_pos);
-                else if (p.z > max_z)
-                    p = Plane::XY(-max_z).ray_intersect(cursor_pos, camera_pos);
-                camera_pos = p;
+                ;
+                camera_dist -= (camera_dist * 0.4f * event.wheel.y);
+                camera_dist = clamp(camera_dist, 1.0f, 1000.0f);
                 break;
             }
             case SDL_MOUSEBUTTONDOWN:
-                do_spawn_boid(&entity_manager, cursor_pos);
+                if (event.button.button == SDL_BUTTON_LEFT) {
+                    do_spawn_boid(&entity_manager, cursor_pos);
+                } else if (event.button.button == SDL_BUTTON_RIGHT) {
+                    if (!rotating) {
+                        rotating = true;
+                        SDL_SetRelativeMouseMode(SDL_TRUE);
+                    }
+                }
+                break;
+            case SDL_MOUSEBUTTONUP:
+                if (event.button.button == SDL_BUTTON_RIGHT) {
+                    if (rotating) {
+                        rotating = false;
+                        SDL_SetRelativeMouseMode(SDL_FALSE);
+                    }
+                }
                 break;
             case SDL_QUIT:
                 running = false;

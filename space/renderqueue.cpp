@@ -45,7 +45,10 @@ void RenderQueue::perform() {
             mesh->bind();
         }
 
-        mesh->render();
+        if (cmd->indexed)
+            mesh->render_indexed(cmd->offset, cmd->count);
+        else
+            mesh->render(cmd->offset, cmd->count);
     }
 
     if (mesh) mesh->unbind();

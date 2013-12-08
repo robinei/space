@@ -58,9 +58,23 @@ struct Plane {
         return p0 + v * t;
     }
 
+    vec3 project(vec3 v) {
+        return v - n * glm::dot(v, n);
+    }
+
     static Plane XY(float d=0) { return Plane(vec3(0, 0, 1), d); }
     static Plane XZ(float d=0) { return Plane(vec3(0, 1, 0), d); }
     static Plane YZ(float d=0) { return Plane(vec3(1, 0, 0), d); }
 };
+
+
+template <typename T>
+T clamp(T value, T min, T max) {
+    if (value < min)
+        return min;
+    if (value > max)
+        return max;
+    return value;
+}
 
 #endif

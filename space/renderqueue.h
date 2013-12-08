@@ -36,6 +36,10 @@ public:
     Program::Ref program;
     Mesh::Ref mesh;
 
+    bool indexed;
+    GLint offset;
+    GLsizei count;
+
     template <typename T>
     void add_uniform(const char *name, const T &value) {
         GLint location = program->uniform_location(name);
@@ -53,7 +57,12 @@ private:
     friend class Arena;
     friend class RenderQueue;
 
-    RenderCommand() : renderqueue(nullptr), uniforms(nullptr) {}
+    RenderCommand() :
+        indexed(true),
+        offset(0),
+        count(0),
+        renderqueue(nullptr),
+        uniforms(nullptr) {}
     ~RenderCommand() {}
     RenderCommand(const RenderCommand &);
     RenderCommand &operator=(const RenderCommand &);
