@@ -2,6 +2,7 @@
 #include "statecontext.h"
 #include "fixedhashtable.h"
 #include "mtrand.h"
+#include <cstring>
 
 #define Foreach_Enabled(X) \
     X(GL_BLEND) \
@@ -100,20 +101,30 @@ StateContext::~StateContext() {
     if (!prev)
         return;
 
-    if (_depth_mask != prev->_depth_mask)
-        glDepthMask(prev->_depth_mask);
+    if (!memcmp(&state, &prev->state, sizeof(State)))
+        return;
+
+    if (state.depth_mask != prev->state.depth_mask)
+        glDepthMask(prev->state.depth_mask);
     
-    if (_depth_func != prev->_depth_func)
-        glDepthFunc(prev->_depth_func);
+    if (state.depth_func != prev->state.depth_func)
+        glDepthFunc(prev->state.depth_func);
     
-    if (_cull_face != prev->_cull_face)
-        glCullFace(prev->_cull_face);
+    if (state.cull_face != prev->state.cull_face)
+        glCullFace(prev->state.cull_face);
     
-    if (_enabled != prev->_enabled) {
+    if (state.src_rgb != prev->state.src_rgb ||
+        state.dst_rgb != prev->state.dst_rgb ||
+        state.src_alpha != prev->state.src_alpha ||
+        state.dst_alpha != prev->state.dst_alpha)
+        glBlendFuncSeparate(prev->state.src_rgb, prev->state.dst_rgb,
+                            prev->state.src_alpha, prev->state.dst_alpha);
+    
+    if (state.enabled != prev->state.enabled) {
         for (unsigned int i = 0; i < Enabled_Max; ++i) {
             uint64_t flag = (1LL << i);
-            if ((_enabled & flag) != (prev->_enabled & flag)) {
-                if (prev->_enabled & flag)
+            if ((state.enabled & flag) != (prev->state.enabled & flag)) {
+                if (prev->state.enabled & flag)
                     glEnable(enabled_values[i]);
                 else
                     glDisable(enabled_values[i]);
@@ -126,13 +137,13 @@ StateContext::~StateContext() {
 void StateContext::enable(GLenum cap, bool value) {
     int i = enabled_index(cap);
     uint64_t flag = 1LL << i;
-    if (((_enabled & flag) != 0) != (value != 0)) {
+    if (((state.enabled & flag) != 0) != (value != 0)) {
         if (value) {
             glEnable(cap);
-            _enabled |= flag;
+            state.enabled |= flag;
         } else {
             glDisable(cap);
-            _enabled &= ~flag;
+            state.enabled &= ~flag;
         }
     }
 }
@@ -144,58 +155,102 @@ void StateContext::disable(GLenum cap) {
 bool StateContext::enabled(GLenum cap) {
     int i = enabled_index(cap);
     uint64_t flag = 1LL << i;
-    return (_enabled & flag) != 0;
+    return (state.enabled & flag) != 0;
 }
 
 void StateContext::depth_mask(GLboolean flag) {
-    if (_depth_mask != flag) {
-        _depth_mask = flag;
+    if (state.depth_mask != flag) {
+        state.depth_mask = flag;
         glDepthMask(flag);
     }
 }
 
 GLboolean StateContext::depth_mask() {
-    return _depth_mask;
+    return state.depth_mask;
 }
 
 void StateContext::depth_func(GLenum func) {
-    if (_depth_func != func) {
-        _depth_func = func;
+    if (state.depth_func != func) {
+        state.depth_func = func;
         glDepthFunc(func);
     }
 }
 
 GLenum StateContext::depth_func() {
-    return _depth_func;
+    return state.depth_func;
 }
 
 void StateContext::cull_face(GLenum mode) {
-    if (_cull_face != mode) {
-        _cull_face = mode;
+    if (state.cull_face != mode) {
+        state.cull_face = mode;
         glCullFace(mode);
     }
 }
 
 GLenum StateContext::cull_face() {
-    return _cull_face;
+    return state.cull_face;
+}
+
+void StateContext::blend_func(GLenum src, GLenum dst) {
+    blend_func_separate(src, dst, src, dst);
+}
+
+void StateContext::blend_func_separate(GLenum src_rgb, GLenum dst_rgb,
+                                       GLenum src_alpha, GLenum dst_alpha) {
+    if (src_rgb != state.src_rgb || dst_rgb != state.dst_rgb ||
+        src_alpha != state.src_alpha || dst_alpha != state.dst_alpha) {
+        state.src_rgb = src_rgb;
+        state.dst_rgb = dst_rgb;
+        state.src_alpha = src_alpha;
+        state.dst_alpha = dst_alpha;
+        glBlendFuncSeparate(src_rgb, dst_rgb, src_alpha, dst_alpha);
+    }
+}
+
+GLenum StateContext::blend_src_rgb() {
+    return state.src_rgb;
+}
+
+GLenum StateContext::blend_dst_rgb() {
+    return state.dst_rgb;
+}
+
+GLenum StateContext::blend_src_alpha() {
+    return state.src_alpha;
+}
+
+GLenum StateContext::blend_dst_alpha() {
+    return state.dst_alpha;
 }
 
 void StateContext::load_state() {
     GLint int_value;
 
-    glGetBooleanv(GL_DEPTH_WRITEMASK, &_depth_mask);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &state.depth_mask);
 
     glGetIntegerv(GL_DEPTH_FUNC, &int_value);
-    _depth_func = int_value;
+    state.depth_func = int_value;
 
     glGetIntegerv(GL_CULL_FACE_MODE, &int_value);
-    _cull_face = int_value;
+    state.cull_face = int_value;
 
-    _enabled = 0;
+    glGetIntegerv(GL_BLEND_SRC_RGB, &int_value);
+    state.src_rgb = int_value;
+
+    glGetIntegerv(GL_BLEND_DST_RGB, &int_value);
+    state.dst_rgb = int_value;
+
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &int_value);
+    state.src_alpha = int_value;
+
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &int_value);
+    state.dst_alpha = int_value;
+
+    state.enabled = 0;
     for (unsigned int i = 0; i < Enabled_Max; ++i) {
         if (glIsEnabled(enabled_values[i])) {
             uint64_t flag = 1LL << i;
-            _enabled |= flag;
+            state.enabled |= flag;
         }
     }
 }

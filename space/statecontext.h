@@ -22,14 +22,25 @@ public:
     void cull_face(GLenum mode);
     GLenum cull_face();
 
+    void blend_func(GLenum src, GLenum dst);
+    void blend_func_separate(GLenum src_rgb, GLenum dst_rgb, GLenum src_alpha, GLenum dst_alpha);
+    GLenum blend_src_rgb();
+    GLenum blend_dst_rgb();
+    GLenum blend_src_alpha();
+    GLenum blend_dst_alpha();
+
 private:
     void load_state();
 
-    GLboolean _depth_mask;
-    GLenum _depth_func;
-    GLenum _cull_face;
-    uint64_t _enabled;
+    struct State {
+        GLboolean depth_mask;
+        GLenum depth_func;
+        GLenum cull_face;
+        GLenum src_rgb, dst_rgb, src_alpha, dst_alpha;
+        uint64_t enabled;
+    };
 
+    State state;
     StateContext *prev;
 };
 

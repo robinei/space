@@ -48,7 +48,6 @@ do { \
 
 static RenderQueue renderqueue;
 static Program::Ref ship_program;
-static Program::Ref qtree_program;
 static Mesh::Ref ship_mesh;
 static Mesh::Ref asteroid_mesh;
 static float ship_radius;
@@ -181,7 +180,7 @@ Mesh::Ref load_mesh(const std::string &filename, float &radius_out, bool want_no
 
 class SkyBox {
 public:
-    SkyBox() {
+    SkyBox(const char *paths[6]) {
         program = Program::create();
         program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/skybox.vert"));
         program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/skybox.frag"));
@@ -189,20 +188,10 @@ public:
         program->link();
         program->detach_all();
 
-        const char *paths[6] {
-            "../data/skyboxes/default_right1.jpg",
-            "../data/skyboxes/default_left2.jpg",
-            "../data/skyboxes/default_top3.jpg",
-            "../data/skyboxes/default_bottom4.jpg",
-            "../data/skyboxes/default_front5.jpg",
-            "../data/skyboxes/default_back6.jpg"
-        };
         texture = Texture::create_cubemap(paths);
 
         float radius;
         mesh = load_mesh("../data/meshes/sphere.ply", radius, false);
-        printf("skybox radius: %f\n", radius);
-        printf("skybox vertexes: %d\n", mesh->vertex_buffer(0)->size() / (sizeof(float)* 3));
     }
 
     void render(mat4 view_matrix, mat4 projection_matrix) {
@@ -673,7 +662,7 @@ void Ship::update(EntityManager *m, float dt) {
     acc += planehug() * 1.5f;
     acc += zseparation() * 1.5f;
 
-    acc += seek(cursor_pos) * 1.0f;
+    acc += arrive(cursor_pos) * 1.0f;
 
     body->vel += acc * dt;
     body->vel = limit(body->vel, maxspeed);
@@ -815,7 +804,7 @@ int main(int argc, char *argv[]) {
 
     if (SDL_GetDesktopDisplayMode(0, &mode) < 0)
         die("SDL_GetDesktopDisplayMode() error: %s", SDL_GetError());
-    //mode.w = 1920, mode.h = 1080;
+    mode.w = 1920, mode.h = 1080;
 
     SDL_Window *window = SDL_CreateWindow(
         "Test",
@@ -826,8 +815,8 @@ int main(int argc, char *argv[]) {
     if (!window)
         die("SDL_CreateWindow() error: %s", SDL_GetError());
 
-    if (SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP) < 0)
-    	die("SDL_SetWindowFullscreen() error: %s", SDL_GetError());
+    //if (SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP) < 0)
+    //	die("SDL_SetWindowFullscreen() error: %s", SDL_GetError());
 
     SDL_GLContext glcontext = SDL_GL_CreateContext(window);
     if (!glcontext)
@@ -869,39 +858,36 @@ int main(int argc, char *argv[]) {
     ship_program->link();
     ship_program->detach_all();
 
-    qtree_program = Program::create();
-    qtree_program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/pos.vert"));
-    qtree_program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/color.frag"));
-    qtree_program->attrib("in_pos", 0);
-    qtree_program->link();
-    qtree_program->detach_all();
+    Program::Ref line_program = Program::create();
+    line_program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/color.vert"));
+    line_program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/color.frag"));
+    line_program->attrib("in_pos", 0);
+    line_program->attrib("in_color", 1);
+    line_program->link();
+    line_program->detach_all();
 
-    std::vector<vec2> qtree_lines;
-    const int qtree_max_vertexes = 16000;
-    auto qtree_fmt(VertexFormat::create());
-    qtree_fmt->add(VertexFormat::Position, 0, 2, GL_FLOAT);
+#pragma pack(push, 1)
+    struct LineVertex {
+        vec3 pos;
+        vec4 color;
+        LineVertex() {}
+        LineVertex(vec3 pos, vec4 color) : pos(pos), color(color) {}
+    };
+#pragma pack(pop)
+    std::vector<LineVertex> line_vertexes;
+    const int max_line_vertexes = 32000;
+    auto line_fmt(VertexFormat::create());
+    line_fmt->add(VertexFormat::Position, 0, 3, GL_FLOAT);
+    line_fmt->add(VertexFormat::Color, 1, 4, GL_FLOAT);
     
-    auto qtree_buf(BufferObject::create());
-    qtree_buf->bind();
-    qtree_buf->data(sizeof(vec2)*qtree_max_vertexes, nullptr, GL_STREAM_DRAW);
-    qtree_buf->unbind();
+    auto line_buf(BufferObject::create());
+    line_buf->bind();
+    line_buf->data(sizeof(LineVertex)*max_line_vertexes, nullptr, GL_STREAM_DRAW);
+    line_buf->unbind();
 
-    auto qtree_mesh = Mesh::create(GL_LINES, 1);
-    qtree_mesh->set_vertex_buffer(0, qtree_buf, qtree_fmt);
+    auto line_mesh = Mesh::create(GL_LINES, 1);
+    line_mesh->set_vertex_buffer(0, line_buf, line_fmt);
 
-
-    std::vector<vec3> vlines_lines;
-    const int vlines_max_vertexes = 16000;
-    auto vlines_fmt(VertexFormat::create());
-    vlines_fmt->add(VertexFormat::Position, 0, 3, GL_FLOAT);
-    
-    auto vlines_buf(BufferObject::create());
-    vlines_buf->bind();
-    vlines_buf->data(sizeof(vec2)*vlines_max_vertexes, nullptr, GL_STREAM_DRAW);
-    vlines_buf->unbind();
-
-    auto vlines_mesh = Mesh::create(GL_LINES, 1);
-    vlines_mesh->set_vertex_buffer(0, vlines_buf, vlines_fmt);
 
     //SDL_SetRelativeMouseMode(SDL_TRUE);
 
@@ -934,7 +920,15 @@ int main(int argc, char *argv[]) {
     bool running = true;
     bool rotating = false;
 
-    SkyBox skybox;
+    const char *paths[6] {
+        "../data/skyboxes/default_right1.jpg",
+        "../data/skyboxes/default_left2.jpg",
+        "../data/skyboxes/default_top3.jpg",
+        "../data/skyboxes/default_bottom4.jpg",
+        "../data/skyboxes/default_front5.jpg",
+        "../data/skyboxes/default_back6.jpg"
+    };
+    SkyBox skybox(paths);
 
     while (running) {
         //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -957,13 +951,14 @@ int main(int argc, char *argv[]) {
 
         vec3 camera_right = glm::cross(vec3(0, 0, 1), camera_forward);
 
+        mat4 perspective_matrix = glm::perspective(45.0f, aspect_ratio, 0.1f, 10000.0f);
         if (orthogonal_projection) {
             float dim = camera_pos.z;
             projection_matrix = glm::ortho(-dim*aspect_ratio, dim*aspect_ratio,
                                            -dim, dim,
                                            -10000.0f, 10000.0f);
         } else {
-            projection_matrix = glm::perspective(45.0f, aspect_ratio, 0.1f, 10000.0f);
+            projection_matrix = perspective_matrix;
         }
 
         view_matrix = glm::lookAt(camera_pos,
@@ -971,7 +966,8 @@ int main(int argc, char *argv[]) {
                                   vec3(0, 0, 1));
 
         vec3 screen_center = screen_to_world(mode.w / 2, mode.h / 2);
-        cursor_pos = screen_to_world(mx, my);
+        if (!rotating)
+            cursor_pos = screen_to_world(mx, my);
 
         //light_dir = glm::normalize(glm::angleAxis(dt*10.0f, vec3(0, 0, 1)) * light_dir);
 
@@ -995,54 +991,40 @@ int main(int argc, char *argv[]) {
         context.enable(GL_CULL_FACE);
         context.cull_face(GL_BACK);
 
-        skybox.render(view_matrix, projection_matrix);
-
-        {
-            qtree_lines.clear();
-            body_system.quad_tree.gather_outlines([&](float x, float y) mutable {
-                qtree_lines.push_back(vec2(x, y));
-            });
-            if (qtree_lines.size() > qtree_max_vertexes)
-                qtree_lines.resize(qtree_max_vertexes);
-            qtree_buf->bind();
-            qtree_buf->write(0, sizeof(qtree_lines[0])*qtree_lines.size(), &qtree_lines[0]);
-            qtree_buf->unbind();
-            qtree_mesh->set_num_vertexes(qtree_lines.size());
-
-            auto cmd = renderqueue.add_command(qtree_program, qtree_mesh);
-            cmd->indexed = false;
-            cmd->add_uniform("m_pvm", projection_matrix * view_matrix);
-            cmd->add_uniform("color", vec4(0.2f, 0.2f, 0.2f, 1));
-
-            StateContext context;
-            context.depth_mask(GL_FALSE);
-            renderqueue.flush();
-        }
-
-        {
-            vlines_lines.clear();
-            for (auto b : body_system) {
-                vec3 pos = b->pos;
-                pos.z = 0;
-                vlines_lines.push_back(pos);
-                vlines_lines.push_back(b->pos);
-            }
-            if (vlines_lines.size() > vlines_max_vertexes)
-                vlines_lines.resize(vlines_max_vertexes);
-            vlines_buf->bind();
-            vlines_buf->write(0, sizeof(vlines_lines[0])*vlines_lines.size(), &vlines_lines[0]);
-            vlines_buf->unbind();
-            vlines_mesh->set_num_vertexes(vlines_lines.size());
-
-            auto cmd = renderqueue.add_command(qtree_program, vlines_mesh);
-            cmd->indexed = false;
-            cmd->add_uniform("m_pvm", projection_matrix * view_matrix);
-            cmd->add_uniform("color", vec4(0.5f, 0.5f, 0.5f, 1));
-            renderqueue.flush();
-        }
+        skybox.render(view_matrix, perspective_matrix);
 
         simple_renderable_system.render(&renderqueue, view_matrix, projection_matrix);
         renderqueue.flush();
+
+        {
+            line_vertexes.clear();
+            body_system.quad_tree.gather_outlines([&](float x, float y) mutable {
+                line_vertexes.push_back(LineVertex(vec3(x, y, 0), vec4(1, 1, 1, 0.2f)));
+            });
+            for (auto b : body_system) {
+                vec3 pos = b->pos;
+                pos.z = 0;
+                line_vertexes.push_back(LineVertex(pos, vec4(1, 1, 1, 0.35f)));
+                line_vertexes.push_back(LineVertex(b->pos, vec4(1, 1, 1, 0.35f)));
+            }
+            if (line_vertexes.size() > max_line_vertexes)
+                line_vertexes.resize(max_line_vertexes);
+
+            line_buf->bind();
+            line_buf->write(0, sizeof(line_vertexes[0])*line_vertexes.size(), &line_vertexes[0]);
+            line_buf->unbind();
+            line_mesh->set_num_vertexes(line_vertexes.size());
+
+            auto cmd = renderqueue.add_command(line_program, line_mesh);
+            cmd->indexed = false;
+            cmd->add_uniform("m_pvm", projection_matrix * view_matrix);
+
+            StateContext context;
+            context.depth_mask(GL_FALSE);
+            context.enable(GL_BLEND);
+            context.blend_func(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            renderqueue.flush();
+        }
         
         SDL_GL_SwapWindow(window);
 
@@ -1118,8 +1100,8 @@ int main(int argc, char *argv[]) {
     }
 
     ship_program = 0;
-    qtree_program = 0;
     ship_mesh = 0;
+    asteroid_mesh = 0;
 
     SDL_GL_DeleteContext(glcontext);
     SDL_DestroyWindow(window);
