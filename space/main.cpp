@@ -7,7 +7,8 @@
 #include <cstdint>
 #include <algorithm>
 
-#include <SDL.h>
+#include "SDL.h"
+#include "SDL_mixer.h"
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/random.hpp>
@@ -615,7 +616,7 @@ int main(int argc, char *argv[]) {
 #endif
     printf("Starting...\n");
 
-    if (SDL_Init(SDL_INIT_VIDEO) < 0)
+    if (SDL_Init(SDL_INIT_EVERYTHING) < 0)
         die("SDL_Init() error: %s", SDL_GetError());
 
     bool ok = true;
@@ -668,6 +669,18 @@ int main(int argc, char *argv[]) {
         if (SDL_GL_SetSwapInterval(1) < 0)
             printf("SDL_GL_SetSwapInterval(1) failed: %s\n", SDL_GetError());
     }
+
+
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) < 0) {
+        die("Mix_OpenAudio() error: %s", Mix_GetError());
+    }
+    Mix_Music *music = Mix_LoadMUS("../data/music/test.ogg");
+    if (!music) {
+        printf("Mix_LoadMUS() error: %s\n", Mix_GetError());
+    } else {
+        Mix_PlayMusic(music, -1);
+    }
+
 
     StateContext context;
     context.enable(GL_MULTISAMPLE);
@@ -949,6 +962,12 @@ int main(int argc, char *argv[]) {
     ship_program = 0;
     ship_mesh = 0;
     asteroid_mesh = 0;
+
+    if (music) {
+        Mix_HaltMusic();
+        Mix_FreeMusic(music);
+    }
+    Mix_CloseAudio();
 
     SDL_GL_DeleteContext(glcontext);
     SDL_DestroyWindow(window);
