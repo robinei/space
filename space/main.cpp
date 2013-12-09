@@ -569,11 +569,10 @@ static void add_asteroid(EntityManager *m, vec3 pos) {
     r->model_matrix = glm::translate(pos) * glm::scale(vec3(10, 10, 10));
     r->mesh = asteroid_mesh;
     r->program = ship_program;
-    r->ambient_color = vec4(0.25f, 0.25f, 0.25f, 1);
-    r->diffuse_color = vec4(0.4f, 0.4f, 0.4f, 1);
-    r->specular_color = vec4(0.774597f, 0.774597f, 0.774597f, 1);
-    //r->shininess = 76.8f;
-    r->shininess = 160.8f;
+    r->ambient_color = vec4(0.15f, 0.15f, 0.15f, 1);
+    r->diffuse_color = vec4(0.3f, 0.3f, 0.3f, 1);
+    r->specular_color = vec4(0.4f, 0.4f, 0.4f, 1);
+    r->shininess = 56.8f;
 
     m->optimize_entity(e);
     m->init_entity(e);
@@ -722,10 +721,10 @@ int main(int argc, char *argv[]) {
     //SDL_SetRelativeMouseMode(SDL_TRUE);
 
 
+    EntityManager entity_manager;
     BodySystem body_system;
     ShipSystem ship_system;
     SimpleRenderableSystem simple_renderable_system;
-    EntityManager entity_manager;
     entity_manager.add_system(&body_system);
     entity_manager.add_system(&ship_system);
     entity_manager.add_system(&simple_renderable_system);

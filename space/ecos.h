@@ -110,6 +110,9 @@ public:
         return static_cast<T *>(get_system(T::TYPE));
     }
 
+    IterablePool<Entity>::iterator begin() { return entity_pool.begin(); }
+    IterablePool<Entity>::iterator end() { return entity_pool.end(); }
+
 private:
     void really_destroy_entity(Entity *e);
     void add_component(Entity::ComponentBlock *block, Component *c);
