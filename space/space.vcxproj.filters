@@ -107,5 +107,8 @@
     <ClInclude Include="statecontext.h">
       <Filter>render</Filter>
     </ClInclude>
+    <ClInclude Include="skybox.h">
+      <Filter>game</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

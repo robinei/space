@@ -112,6 +112,7 @@
     <ClInclude Include="quadtree.h" />
     <ClInclude Include="refcounted.h" />
     <ClInclude Include="renderqueue.h" />
+    <ClInclude Include="skybox.h" />
     <ClInclude Include="statecontext.h" />
     <ClInclude Include="texture.h" />
     <ClInclude Include="weakref.h" />

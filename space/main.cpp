@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <algorithm>
 
 #include <SDL.h>
 #include <glm/gtc/quaternion.hpp>
@@ -26,6 +27,7 @@
 #include "renderqueue.h"
 #include "mtrand.h"
 #include "ecos.h"
+#include "skybox.h"
 
 #define STBI_HEADER_FILE_ONLY
 #include "stb_image.c"
@@ -50,178 +52,9 @@ static RenderQueue renderqueue;
 static Program::Ref ship_program;
 static Mesh::Ref ship_mesh;
 static Mesh::Ref asteroid_mesh;
-static float ship_radius;
-static float asteroid_radius;
 
 static vec3 cursor_pos;
 
-
-
-
-
-
-
-struct MeshFileHeader {
-    uint32_t fourcc;
-    uint32_t version;
-
-    uint32_t num_vertices;
-    uint32_t num_indices;
-
-    uint32_t have_normals;
-    uint32_t have_tangents;
-    uint32_t have_bitangents;
-    uint32_t num_texcoord_sets;
-    uint32_t num_color_sets;
-};
-
-
-
-#include <assimp/Importer.hpp>
-#include <assimp/scene.h>
-#include <assimp/postprocess.h>
-
-
-static Mesh::Ref do_load_mesh(aiMesh *aimesh, float &radius_out, bool want_normals) {
-    std::vector<GLfloat> verts;
-    std::vector<GLuint> indices;
-
-    assert(aimesh->HasPositions());
-    if (want_normals) {
-        assert(aimesh->HasNormals());
-    }
-
-    for (unsigned int i = 0; i < aimesh->mNumVertices; ++i) {
-        aiVector3D v = aimesh->mVertices[i];
-        verts.push_back(v.x);
-        verts.push_back(v.y);
-        verts.push_back(v.z);
-
-        if (want_normals) {
-            aiVector3D n = aimesh->mNormals[i];
-            verts.push_back(n.x);
-            verts.push_back(n.y);
-            verts.push_back(n.z);
-        }
-
-        float len = v.Length();
-        if (len > radius_out)
-            radius_out = len;
-    }
-
-    for (unsigned int i = 0; i < aimesh->mNumFaces; ++i) {
-        aiFace f = aimesh->mFaces[i];
-        if (f.mNumIndices != 3)
-            return 0;
-        indices.push_back(f.mIndices[0]);
-        indices.push_back(f.mIndices[1]);
-        indices.push_back(f.mIndices[2]);
-    }
-
-    VertexFormat::Ref format = VertexFormat::create();
-    format->add(VertexFormat::Position, 0, 3, GL_FLOAT);
-    if (want_normals)
-        format->add(VertexFormat::Normal, 1, 3, GL_FLOAT);
-
-    BufferObject::Ref index_buffer = BufferObject::create();
-    index_buffer->bind();
-    index_buffer->data(sizeof(indices[0])*indices.size(), &indices[0]);
-    index_buffer->unbind();
-
-    BufferObject::Ref vertex_buffer = BufferObject::create();
-    vertex_buffer->bind();
-    vertex_buffer->data(sizeof(verts[0])*verts.size(), &verts[0]);
-    vertex_buffer->unbind();
-
-    Mesh::Ref mesh = Mesh::create(GL_TRIANGLES, 1);
-    mesh->set_vertex_buffer(0, vertex_buffer, format);
-    mesh->set_index_buffer(index_buffer, indices.size(), GL_UNSIGNED_INT);
-
-    return mesh;
-}
-
-Mesh::Ref load_mesh(const std::string &filename, float &radius_out, bool want_normals=true) {
-    Assimp::Importer importer;
-
-    unsigned int flags = aiProcess_Triangulate |
-        aiProcess_SortByPType |
-        aiProcess_JoinIdenticalVertices |
-        aiProcess_OptimizeMeshes |
-        aiProcess_OptimizeGraph |
-        aiProcess_PreTransformVertices;
-    if (want_normals)
-        flags |= aiProcess_GenSmoothNormals;
-    const aiScene* scene = importer.ReadFile(filename, flags);
-
-    if (!scene) {
-        printf("import error: %s\n", importer.GetErrorString());
-        return 0;
-    }
-
-    printf("num meshes: %d\n\n", scene->mNumMeshes);
-
-    radius_out = 0;
-    for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
-        aiMesh *aimesh = scene->mMeshes[i];
-        printf("  %s -\tverts: %d,\tfaces: %d,\tmat: %d,\thas colors: %d\n", aimesh->mName.C_Str(), aimesh->mNumVertices, aimesh->mNumFaces, aimesh->mMaterialIndex, aimesh->HasVertexColors(0));
-
-        Mesh::Ref mesh = do_load_mesh(aimesh, radius_out, want_normals);
-        if (!mesh)
-            continue;
-        return mesh;
-    }
-    return 0;
-}
-
-
-
-
-
-
-class SkyBox {
-public:
-    SkyBox(const char *paths[6]) {
-        program = Program::create();
-        program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/skybox.vert"));
-        program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/skybox.frag"));
-        program->attrib("in_pos", 0);
-        program->link();
-        program->detach_all();
-
-        texture = Texture::create_cubemap(paths);
-
-        float radius;
-        mesh = load_mesh("../data/meshes/sphere.ply", radius, false);
-    }
-
-    void render(mat4 view_matrix, mat4 projection_matrix) {
-        // remove translation element from view matrix
-        // (so we render the mesh centered around the camera)
-        view_matrix[3].x = 0;
-        view_matrix[3].y = 0;
-        view_matrix[3].z = 0;
-
-        StateContext context;
-        context.disable(GL_CULL_FACE);
-        context.depth_func(GL_ALWAYS);
-        context.depth_mask(GL_FALSE);
-        
-        program->bind();
-        program->uniform("m_pvm", projection_matrix * view_matrix);
-        program->uniform("tex", 0);
-        texture->bind(0, GL_TEXTURE_CUBE_MAP);
-        mesh->bind();
-        mesh->render_indexed();
-        mesh->unbind();
-        texture->unbind();
-        program->unbind();
-    }
-
-private:
-    Program::Ref program;
-    Texture::Ref texture;
-    Mesh::Ref mesh;
-};
 
 
 
@@ -698,7 +531,7 @@ static void do_spawn_boid(EntityManager *m, vec3 pos) {
     Body *b = m->add_component<Body>(e);
     b->pos = pos;
     b->vel = vec3(glm::diskRand(10.0f), 0.0f);
-    b->radius = ship_radius;
+    b->radius = ship_mesh->radius();
 
     Ship *s = m->add_component<Ship>(e);
     s->dir = glm::normalize(b->vel);
@@ -730,7 +563,7 @@ static void add_asteroid(EntityManager *m, vec3 pos) {
 
     Body *b = m->add_component<Body>(e);
     b->pos = pos;
-    b->radius = asteroid_radius;
+    b->radius = asteroid_mesh->radius() * 10;
 
     SimpleRenderable *r = m->add_component<SimpleRenderable>(e);
     r->model_matrix = glm::translate(pos) * glm::scale(vec3(10, 10, 10));
@@ -804,7 +637,7 @@ int main(int argc, char *argv[]) {
 
     if (SDL_GetDesktopDisplayMode(0, &mode) < 0)
         die("SDL_GetDesktopDisplayMode() error: %s", SDL_GetError());
-    mode.w = 1920, mode.h = 1080;
+    //mode.w = 1920, mode.h = 1080;
 
     SDL_Window *window = SDL_CreateWindow(
         "Test",
@@ -815,8 +648,8 @@ int main(int argc, char *argv[]) {
     if (!window)
         die("SDL_CreateWindow() error: %s", SDL_GetError());
 
-    //if (SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP) < 0)
-    //	die("SDL_SetWindowFullscreen() error: %s", SDL_GetError());
+    if (SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP) < 0)
+    	die("SDL_SetWindowFullscreen() error: %s", SDL_GetError());
 
     SDL_GLContext glcontext = SDL_GL_CreateContext(window);
     if (!glcontext)
@@ -841,11 +674,8 @@ int main(int argc, char *argv[]) {
     context.enable(GL_MULTISAMPLE);
 
     try {
-        ship_mesh = load_mesh("../data/meshes/harv.ply", ship_radius);
-        asteroid_mesh = load_mesh("../data/meshes/asteroid.ply", asteroid_radius);
-        asteroid_radius *= 10;
-        printf("ship_radius: %f\n", ship_radius);
-        printf("asteroid_radius: %f\n", asteroid_radius);
+        ship_mesh = Mesh::load("../data/meshes/harv.ply");
+        asteroid_mesh = Mesh::load("../data/meshes/asteroid.ply");
     } catch (const std::exception &e) {
         die("error: %s", e.what());
     }
@@ -999,13 +829,13 @@ int main(int argc, char *argv[]) {
         {
             line_vertexes.clear();
             body_system.quad_tree.gather_outlines([&](float x, float y) mutable {
-                line_vertexes.push_back(LineVertex(vec3(x, y, 0), vec4(1, 1, 1, 0.2f)));
+                line_vertexes.push_back(LineVertex(vec3(x, y, 0), vec4(1, 1, 1, 0.1f)));
             });
             for (auto b : body_system) {
                 vec3 pos = b->pos;
                 pos.z = 0;
-                line_vertexes.push_back(LineVertex(pos, vec4(1, 1, 1, 0.35f)));
-                line_vertexes.push_back(LineVertex(b->pos, vec4(1, 1, 1, 0.35f)));
+                line_vertexes.push_back(LineVertex(pos, vec4(1, 1, 1, 0.2f)));
+                line_vertexes.push_back(LineVertex(b->pos, vec4(1, 1, 1, 0.2f)));
             }
             if (line_vertexes.size() > max_line_vertexes)
                 line_vertexes.resize(max_line_vertexes);
@@ -1036,14 +866,19 @@ int main(int argc, char *argv[]) {
         float speed = 1.0;
         float sensitivity = 0.01f;
 
+        vec3 motion(0, 0, 0);
         if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A] || (mx == 0 && !rotating))
-            camera_focus += camera_right*camera_pos.z*dt*speed;
+            motion += camera_right*camera_pos.z*dt*speed;
         if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D] || (mx == mode.w - 1 && !rotating))
-            camera_focus -= camera_right*camera_pos.z*dt*speed;
+            motion -= camera_right*camera_pos.z*dt*speed;
         if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W] || (my == 0 && !rotating))
-            camera_focus += camera_forward*camera_pos.z*dt*speed;
+            motion += camera_forward*camera_pos.z*dt*speed;
         if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S] || (my == mode.h - 1 && !rotating))
-            camera_focus -= camera_forward*camera_pos.z*dt*speed;
+            motion -= camera_forward*camera_pos.z*dt*speed;
+        if (glm::length(motion) > 0) {
+            motion = glm::normalize(motion);
+            camera_focus += motion;
+        }
 
         SDL_Event event;
         while (SDL_PollEvent(&event)) {

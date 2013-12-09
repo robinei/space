@@ -92,6 +92,8 @@ Mesh::Mesh(GLenum mode, int num_vertex_buffers) {
 	_formats = new VertexFormat::Ref[num_vertex_buffers];
 
     _dirty = true;
+
+    _radius = 0;
 }
 
 Mesh::~Mesh() {
@@ -214,3 +216,128 @@ void Mesh::render_indexed(int offset, int count) {
     glDrawElements(_mode, count, _index_type, reinterpret_cast<void *>(offset*prim_size));
 }
 
+
+
+
+
+
+struct MeshFileHeader {
+    uint32_t fourcc;
+    uint32_t version;
+
+    uint32_t num_vertices;
+    uint32_t num_indices;
+
+    uint32_t have_normals;
+    uint32_t have_tangents;
+    uint32_t have_bitangents;
+    uint32_t num_texcoord_sets;
+    uint32_t num_color_sets;
+};
+
+
+
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+
+
+static Mesh::Ref do_load_mesh(aiMesh *aimesh, bool want_normals) {
+    std::vector<GLfloat> verts;
+    std::vector<GLuint> indices;
+
+    assert(aimesh->HasPositions());
+    if (want_normals) {
+        assert(aimesh->HasNormals());
+    }
+
+    float radius = 0;
+
+    for (unsigned int i = 0; i < aimesh->mNumVertices; ++i) {
+        aiVector3D v = aimesh->mVertices[i];
+        verts.push_back(v.x);
+        verts.push_back(v.y);
+        verts.push_back(v.z);
+
+        if (want_normals) {
+            aiVector3D n = aimesh->mNormals[i];
+            verts.push_back(n.x);
+            verts.push_back(n.y);
+            verts.push_back(n.z);
+        }
+
+        float len = v.Length();
+        if (len > radius)
+            radius = len;
+    }
+
+    for (unsigned int i = 0; i < aimesh->mNumFaces; ++i) {
+        aiFace f = aimesh->mFaces[i];
+        if (f.mNumIndices != 3)
+            return 0;
+        indices.push_back(f.mIndices[0]);
+        indices.push_back(f.mIndices[1]);
+        indices.push_back(f.mIndices[2]);
+    }
+
+    VertexFormat::Ref format = VertexFormat::create();
+    format->add(VertexFormat::Position, 0, 3, GL_FLOAT);
+    if (want_normals)
+        format->add(VertexFormat::Normal, 1, 3, GL_FLOAT);
+
+    BufferObject::Ref index_buffer = BufferObject::create();
+    index_buffer->bind();
+    index_buffer->data(sizeof(indices[0])*indices.size(), &indices[0]);
+    index_buffer->unbind();
+
+    BufferObject::Ref vertex_buffer = BufferObject::create();
+    vertex_buffer->bind();
+    vertex_buffer->data(sizeof(verts[0])*verts.size(), &verts[0]);
+    vertex_buffer->unbind();
+
+    Mesh::Ref mesh = Mesh::create(GL_TRIANGLES, 1);
+    mesh->set_vertex_buffer(0, vertex_buffer, format);
+    mesh->set_index_buffer(index_buffer, indices.size(), GL_UNSIGNED_INT);
+
+    mesh->set_radius(radius);
+
+    return mesh;
+}
+
+static Mesh::Ref load_mesh(const char *path, bool want_normals = true) {
+    Assimp::Importer importer;
+
+    unsigned int flags = aiProcess_Triangulate |
+        aiProcess_SortByPType |
+        aiProcess_JoinIdenticalVertices |
+        aiProcess_OptimizeMeshes |
+        aiProcess_OptimizeGraph |
+        aiProcess_PreTransformVertices;
+    if (want_normals)
+        flags |= aiProcess_GenSmoothNormals;
+    const aiScene *scene = importer.ReadFile(path, flags);
+
+    if (!scene) {
+        printf("import error: %s\n", importer.GetErrorString());
+        return 0;
+    }
+
+    printf("num meshes: %d\n\n", scene->mNumMeshes);
+
+    for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
+        aiMesh *aimesh = scene->mMeshes[i];
+        printf("  %s -\tverts: %d,\tfaces: %d,\tmat: %d,\thas colors: %d\n", aimesh->mName.C_Str(), aimesh->mNumVertices, aimesh->mNumFaces, aimesh->mMaterialIndex, aimesh->HasVertexColors(0));
+
+        Mesh::Ref mesh = do_load_mesh(aimesh, want_normals);
+        if (!mesh)
+            continue;
+        return mesh;
+    }
+    return 0;
+}
+
+
+
+Mesh::Ref Mesh::load(const char *path, bool want_normals) {
+    return load_mesh(path, want_normals);
+}

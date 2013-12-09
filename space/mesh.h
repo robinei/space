@@ -65,6 +65,8 @@ public:
 
 	static Ref create(GLenum mode, int num_vertex_buffers);
 
+    static Ref load(const char *path, bool want_normals=true);
+
 	GLenum mode();
 
 	// either use this:
@@ -88,6 +90,9 @@ public:
     void render(int offset = 0, int count = 0);
     void render_indexed(int offset = 0, int count = 0);
 
+    float radius() { return _radius; }
+    void set_radius(float radius) { _radius = radius; }
+
 protected:
 	Mesh(GLenum mode, int num_vertex_buffers);
 	~Mesh();
@@ -110,6 +115,8 @@ private:
 	VertexFormat::Ref *_formats;
 
     bool _dirty;
+
+    float _radius;
 };
 
 #endif
