@@ -535,8 +535,8 @@ static void do_spawn_boid(EntityManager *m, vec3 pos) {
 
     Ship *s = m->add_component<Ship>(e);
     s->dir = glm::normalize(b->vel);
-    s->maxspeed = 40;
-    s->maxforce = 1;
+    s->maxspeed = glm::linearRand(30.0f, 60.0f);
+    s->maxforce = glm::linearRand(0.5f, 2.0f);
     s->team = rand() % 2;
     
     SimpleRenderable *r = m->add_component<SimpleRenderable>(e);
@@ -740,7 +740,8 @@ int main(int argc, char *argv[]) {
 
     vec3 camera_focus(0, 0, 0);
     float camera_dist = 100;
-    vec3 camera_dir = glm::normalize(vec3(1, 1, 1));
+    float camera_pitch = 45;
+    float camera_yaw = 45;
     float aspect_ratio = (float)mode.w / (float)mode.h;
     bool orthogonal_projection = false;
     vec3 light_dir = glm::normalize(vec3(1, 0, 3));
@@ -773,17 +774,22 @@ int main(int argc, char *argv[]) {
         int mx = 0, my = 0;
         SDL_GetMouseState(&mx, &my);
 
-        vec3 camera_pos = camera_focus + camera_dir * camera_dist;
-        
+        if (orthogonal_projection && camera_pitch < 20.0f)
+            camera_pitch = 20.0f;
+        vec3 camera_dir = glm::angleAxis(camera_yaw, vec3(0, 0, 1)) * vec3(1, 0, 0);
+        vec3 camera_right = glm::cross(camera_dir, vec3(0, 0, 1));
         vec3 camera_forward = -camera_dir;
-        camera_forward.z = 0;
-        camera_forward = glm::normalize(camera_forward);
-
-        vec3 camera_right = glm::cross(vec3(0, 0, 1), camera_forward);
+        camera_dir = glm::angleAxis(camera_pitch, camera_right) * camera_dir;
+        vec3 camera_pos = camera_focus + camera_dir * camera_dist;
+        if (camera_pitch < 0.0f) {
+            camera_forward = -camera_forward;
+            camera_right = -camera_right;
+        }
+        
 
         mat4 perspective_matrix = glm::perspective(45.0f, aspect_ratio, 0.1f, 10000.0f);
         if (orthogonal_projection) {
-            float dim = camera_pos.z;
+            float dim = camera_dist*0.5f;
             projection_matrix = glm::ortho(-dim*aspect_ratio, dim*aspect_ratio,
                                            -dim, dim,
                                            -10000.0f, 10000.0f);
@@ -795,7 +801,6 @@ int main(int argc, char *argv[]) {
                                   camera_focus,
                                   vec3(0, 0, 1));
 
-        vec3 screen_center = screen_to_world(mode.w / 2, mode.h / 2);
         if (!rotating)
             cursor_pos = screen_to_world(mx, my);
 
@@ -826,7 +831,7 @@ int main(int argc, char *argv[]) {
         simple_renderable_system.render(&renderqueue, view_matrix, projection_matrix);
         renderqueue.flush();
 
-        {
+        if (orthogonal_projection) {
             line_vertexes.clear();
             body_system.quad_tree.gather_outlines([&](float x, float y) mutable {
                 line_vertexes.push_back(LineVertex(vec3(x, y, 0), vec4(1, 1, 1, 0.1f)));
@@ -863,21 +868,20 @@ int main(int argc, char *argv[]) {
         // Event handling:
         //////////////////////////////////////////////////////////////////////////////////////////////////
 
-        float speed = 1.0;
         float sensitivity = 0.01f;
 
         vec3 motion(0, 0, 0);
         if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A] || (mx == 0 && !rotating))
-            motion += camera_right*camera_pos.z*dt*speed;
+            motion += camera_right;
         if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D] || (mx == mode.w - 1 && !rotating))
-            motion -= camera_right*camera_pos.z*dt*speed;
+            motion -= camera_right;
         if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W] || (my == 0 && !rotating))
-            motion += camera_forward*camera_pos.z*dt*speed;
+            motion += camera_forward;
         if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S] || (my == mode.h - 1 && !rotating))
-            motion -= camera_forward*camera_pos.z*dt*speed;
+            motion -= camera_forward;
         if (glm::length(motion) > 0) {
             motion = glm::normalize(motion);
-            camera_focus += motion;
+            camera_focus += motion * sqrtf(camera_dist) * 0.2f;
         }
 
         SDL_Event event;
@@ -888,27 +892,36 @@ int main(int argc, char *argv[]) {
             case SDL_KEYUP:
                 if (event.key.keysym.sym == SDLK_ESCAPE)
                     running = false;
-                if (event.key.keysym.sym == SDLK_p)
+                if (event.key.keysym.sym == SDLK_SPACE)
                     orthogonal_projection = !orthogonal_projection;
                 break;
             case SDL_MOUSEMOTION:
                 if (rotating) {
-                    ;
-                    float angle_h = -360.f * (float)event.motion.xrel / (float)mode.w;
-                    camera_dir = glm::angleAxis(angle_h, vec3(0, 0, 1)) * camera_dir;
+                    float a = -360.f * (float)event.motion.xrel / (float)mode.w;
+                    do {
+                        camera_yaw += a;
+                    } while (fabsf(camera_yaw) < 0.01f);
 
-                    float angle_v = 360.f * (float)event.motion.yrel / (float)mode.h;
-                    camera_dir = glm::angleAxis(angle_v, camera_right) * camera_dir;
+                    a = 360.f * (float)event.motion.yrel / (float)mode.h;
+                    do {
+                        camera_pitch += a;
+                    } while (fabsf(camera_pitch) < 0.01f);
 
-                    camera_dir = glm::normalize(camera_dir);
+                    while (camera_yaw < 0.0f)
+                        camera_yaw += 360.0f;
+                    while (camera_yaw > 360.0f)
+                        camera_yaw -= 360.0f;
+
+                    if (camera_pitch > 89.0f)
+                        camera_pitch = 89.0f;
+                    if (camera_pitch < -89.0f)
+                        camera_pitch = -89.0f;
                 }
                 break;
-            case SDL_MOUSEWHEEL: {
-                ;
+            case SDL_MOUSEWHEEL:
                 camera_dist -= (camera_dist * 0.4f * event.wheel.y);
-                camera_dist = clamp(camera_dist, 1.0f, 1000.0f);
+                camera_dist = clamp(camera_dist, 10.0f, 1000.0f);
                 break;
-            }
             case SDL_MOUSEBUTTONDOWN:
                 if (event.button.button == SDL_BUTTON_LEFT) {
                     do_spawn_boid(&entity_manager, cursor_pos);
