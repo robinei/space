@@ -780,10 +780,10 @@ int main(int argc, char *argv[]) {
         vec3 camera_forward = -camera_dir;
         camera_dir = glm::angleAxis(camera_pitch, camera_right) * camera_dir;
         vec3 camera_pos = camera_focus + camera_dir * camera_dist;
-        if (camera_pitch < 0.0f) {
+        /*if (camera_pitch < 0.0f) {
             camera_forward = -camera_forward;
             camera_right = -camera_right;
-        }
+        }*/
         
 
         mat4 perspective_matrix = glm::perspective(45.0f, aspect_ratio, 0.1f, 10000.0f);
