@@ -20,7 +20,7 @@ Component *Entity::get_component(ComponentType type) {
 
 EntityManager::~EntityManager() {
     for (Entity *e : entity_pool)
-        destroy_entity(e);
+        really_destroy_entity(e);
 }
 
 void EntityManager::update() {

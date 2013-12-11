@@ -57,8 +57,17 @@ static Mesh::Ref asteroid_mesh;
 static vec3 cursor_pos;
 
 
+#pragma pack(push, 1)
+struct LineVertex {
+    vec3 pos;
+    vec4 color;
+    LineVertex() {}
+    LineVertex(vec3 pos, vec4 color) : pos(pos), color(color) {}
+};
+#pragma pack(pop)
+static std::vector<LineVertex> line_vertexes;
 
-
+static Entity *selected_entity = nullptr;
 
 
 
@@ -157,7 +166,31 @@ void Body::init(EntityManager *m, Entity *e) {
 
 
 
+static bool sweep(Body *b0, Body *b1, float dt, float &t_out) {
+    glm::vec3 v0 = b1->pos - b0->pos;
+    glm::vec3 v1 = v0 + (b1->vel - b0->vel)*dt;
+    float r = (b0->radius + b1->radius);
 
+    float dot00 = glm::dot(v0, v0);
+    float dot01 = glm::dot(v0, v1);
+    float dot11 = glm::dot(v1, v1);
+
+    float a = dot00 - 2.f * dot01 + dot11;
+    float b = 2.f * (dot01 - dot00);
+    float c = dot00 - r*r;
+
+    float det = b*b - 4.f * a*c;
+
+    if (det > 0.f) {
+        float t = -(b + sqrtf(det)) / (2.f * a);
+        if (0.f <= t && t <= 1.f) {
+            t_out = t;
+            return true;
+        }
+    }
+
+    return false;
+}
 
 vec3 limit(vec3 v, float len) {
     if (glm::length(v) > len)
@@ -177,7 +210,7 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
     Entity *friends[MAX_FRIENDS];
     float friend_radius;
 
-    enum { MAX_CLOSEST = 4 };
+    enum { MAX_CLOSEST = 8 };
     Entity *closest[MAX_CLOSEST];
     float closest_radius;
 
@@ -235,7 +268,7 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
 
             Body *b = e->get_component<Body>();
             vec3 d = body->pos - b->pos;
-            d.z = 0;
+            //d.z = 0;
             float len = glm::length(d);
             if (len > sep || len <= 0.00001f) continue;
             d = glm::normalize(d);
@@ -247,6 +280,52 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
             return vec3(0, 0, 0);
         sum /= (float)count;
         return steer(sum);
+    }
+
+    vec3 obstacle_avoid() {
+        float t_horizon = 5.0f;
+        float best_t = 10000000.0f;
+        Body *best_b = nullptr;
+
+        vec3 sum(0, 0, 0);
+
+        for (int i = 0; i < MAX_CLOSEST; ++i) {
+            Entity *e = closest[i];
+            if (!e) continue;
+
+            Body *b = e->get_component<Body>();
+
+            float t = 0.0f;
+            if (sweep(body, b, t_horizon, t)) {
+                vec3 p = body->pos + body->vel*best_t*t_horizon;
+                sum += glm::cross(p - body->pos, p - b->pos);
+
+                line_vertexes.push_back(LineVertex(body->pos, vec4(0, 1, 0, 0.9f)));
+                line_vertexes.push_back(LineVertex(b->pos, vec4(0, 1, 0, 0.1f)));
+
+                if (t < best_t) {
+                    best_t = t;
+                    best_b = b;
+                }
+            }
+        }
+
+        if (!best_b)
+            return vec3(0, 0, 0);
+
+        line_vertexes.push_back(LineVertex(body->pos, vec4(0, 0, 1, 1)));
+        line_vertexes.push_back(LineVertex(body->pos + body->vel*best_t*t_horizon, vec4(0, 0, 1, 1)));
+
+        line_vertexes.push_back(LineVertex(best_b->pos, vec4(1, 0, 0, 1)));
+        line_vertexes.push_back(LineVertex(best_b->pos + best_b->vel*best_t*t_horizon, vec4(1, 0, 0, 1)));
+
+        vec3 v = steer(glm::cross(body->vel, body->pos - best_b->pos));
+        v = steer(sum);
+
+        line_vertexes.push_back(LineVertex(body->pos, vec4(1, 1, 1, 0.8f)));
+        line_vertexes.push_back(LineVertex(body->pos + v*3.0f, vec4(1, 1, 1, 0.8f)));
+
+        return v;
     }
 
     vec3 alignment() {
@@ -404,6 +483,9 @@ class DoodadSystem : public PoolSystem<Doodad, 'DOOD'> {
 };
 */
 
+
+
+
 void BodySystem::update(float dt) {
     /*for (Body *b : *this) {
         Entity *e = b->entity;
@@ -489,14 +571,18 @@ void Ship::update(EntityManager *m, float dt) {
 
     vec3 acc(0, 0, 0);
 
-    acc += separation() * 1.5f;
-    acc += alignment() * 1.0f;
-    acc += cohesion() * 1.0f;
+    acc = obstacle_avoid();
 
-    acc += planehug() * 1.5f;
-    acc += zseparation() * 1.5f;
+    if (acc == vec3(0, 0, 0)) {
+        acc += separation() * 1.5f;
+        acc += alignment() * 1.0f;
+        acc += cohesion() * 1.0f;
 
-    acc += arrive(cursor_pos) * 1.0f;
+        acc += planehug() * 1.5f;
+        //acc += zseparation() * 1.5f;
+
+        acc += arrive(cursor_pos) * 1.0f;
+    }
 
     body->vel += acc * dt;
     body->vel = limit(body->vel, maxspeed);
@@ -527,6 +613,7 @@ void Ship::update(EntityManager *m, float dt) {
 
 
 static void do_spawn_boid(EntityManager *m, vec3 pos) {
+    pos.z = glm::linearRand(-10.0f, 10.0f);
     Entity *e = m->create_entity();
     
     Body *b = m->add_component<Body>(e);
@@ -560,6 +647,7 @@ static void do_spawn_boid(EntityManager *m, vec3 pos) {
 }
 
 static void add_asteroid(EntityManager *m, vec3 pos) {
+    pos.z = glm::linearRand(-10.0f, 10.0f);
     Entity *e = m->create_entity();
 
     Body *b = m->add_component<Body>(e);
@@ -584,7 +672,33 @@ static void add_asteroid(EntityManager *m, vec3 pos) {
 
 
 
+static Entity *closest_to_mouse(EntityManager *manager) {
+    BodySystem *sys = manager->get_system<BodySystem>();
 
+    Body *best = nullptr;
+    float best_dist = 100000.0f;
+
+    sys->quad_tree.query(cursor_pos.x - 50, cursor_pos.y - 50,
+                         cursor_pos.x + 50, cursor_pos.y + 50,
+                         [&](QuadTree::Object *obj) mutable
+    {
+        Body *b = static_cast<Body *>(obj);
+        if (!best) {
+            best = b;
+        } else {
+            vec3 d = b->pos - cursor_pos;
+            float dist = glm::length(d);
+            if (dist < best_dist) {
+                best = b;
+                best_dist = dist;
+            }
+        }
+    });
+
+    if (!best)
+        return nullptr;
+    return best->entity;
+}
 
 
 
@@ -682,7 +796,7 @@ int main(int argc, char *argv[]) {
     }
 
 
-    StateContext context;
+    StateContext context; // create a root context
     context.enable(GL_MULTISAMPLE);
 
     try {
@@ -708,15 +822,6 @@ int main(int argc, char *argv[]) {
     line_program->link();
     line_program->detach_all();
 
-#pragma pack(push, 1)
-    struct LineVertex {
-        vec3 pos;
-        vec4 color;
-        LineVertex() {}
-        LineVertex(vec3 pos, vec4 color) : pos(pos), color(color) {}
-    };
-#pragma pack(pop)
-    std::vector<LineVertex> line_vertexes;
     const int max_line_vertexes = 32000;
     auto line_fmt(VertexFormat::create());
     line_fmt->add(VertexFormat::Position, 0, 3, GL_FLOAT);
@@ -734,16 +839,16 @@ int main(int argc, char *argv[]) {
     //SDL_SetRelativeMouseMode(SDL_TRUE);
 
 
-    EntityManager entity_manager;
     BodySystem body_system;
     ShipSystem ship_system;
     SimpleRenderableSystem simple_renderable_system;
+    EntityManager entity_manager;
     entity_manager.add_system(&body_system);
     entity_manager.add_system(&ship_system);
     entity_manager.add_system(&simple_renderable_system);
     entity_manager.optimize_systems();
 
-    for (int i = 0; i < 40; ++i) {
+    for (int i = 0; i < 100; ++i) {
         do_spawn_boid(&entity_manager, vec3(glm::diskRand(200.0f), 0.0f));
     }
     for (int i = 0; i < 10; ++i) {
@@ -773,6 +878,12 @@ int main(int argc, char *argv[]) {
     };
     SkyBox skybox(paths);
 
+    /*vec3 up(0, 0, 1);
+    vec3 forward(glm::normalize(dir));
+    vec3 right(glm::cross(forward, up));
+    up = glm::cross(right, forward);
+    right = glm::normalize(glm::cross(forward, up));
+    up = glm::normalize(glm::cross(right, forward));*/
     while (running) {
         //////////////////////////////////////////////////////////////////////////////////////////////////
         // Updating:
@@ -789,14 +900,11 @@ int main(int argc, char *argv[]) {
         if (orthogonal_projection && camera_pitch < 20.0f)
             camera_pitch = 20.0f;
         vec3 camera_dir = glm::angleAxis(camera_yaw, vec3(0, 0, 1)) * vec3(1, 0, 0);
-        vec3 camera_right = glm::cross(camera_dir, vec3(0, 0, 1));
         vec3 camera_forward = -camera_dir;
+        vec3 camera_right = glm::cross(camera_dir, vec3(0, 0, 1));
         camera_dir = glm::angleAxis(camera_pitch, camera_right) * camera_dir;
+        vec3 camera_up = glm::cross(camera_right, camera_dir);
         vec3 camera_pos = camera_focus + camera_dir * camera_dist;
-        /*if (camera_pitch < 0.0f) {
-            camera_forward = -camera_forward;
-            camera_right = -camera_right;
-        }*/
         
 
         mat4 perspective_matrix = glm::perspective(45.0f, aspect_ratio, 0.1f, 10000.0f);
@@ -815,6 +923,17 @@ int main(int argc, char *argv[]) {
 
         if (!rotating)
             cursor_pos = screen_to_world(mx, my);
+        
+        if (selected_entity) {
+            if (selected_entity->dying()) {
+                selected_entity = nullptr;
+            }  else {
+                Body *b = selected_entity->get_component<Body>();
+                camera_focus = b->pos;
+            }
+        }
+
+        Entity *hovered_entity = closest_to_mouse(&entity_manager);
 
         //light_dir = glm::normalize(glm::angleAxis(dt*10.0f, vec3(0, 0, 1)) * light_dir);
 
@@ -843,24 +962,49 @@ int main(int argc, char *argv[]) {
         simple_renderable_system.render(&renderqueue, view_matrix, projection_matrix);
         renderqueue.flush();
 
-        if (orthogonal_projection) {
-            line_vertexes.clear();
-            body_system.quad_tree.gather_outlines([&](float x, float y) mutable {
-                line_vertexes.push_back(LineVertex(vec3(x, y, 0), vec4(1, 1, 1, 0.1f)));
-            });
-            for (auto b : body_system) {
-                vec3 pos = b->pos;
-                pos.z = 0;
-                line_vertexes.push_back(LineVertex(pos, vec4(1, 1, 1, 0.2f)));
-                line_vertexes.push_back(LineVertex(b->pos, vec4(1, 1, 1, 0.2f)));
+        {
+            if (orthogonal_projection) {
+                body_system.quad_tree.gather_outlines([&](float x, float y) mutable {
+                    line_vertexes.push_back(LineVertex(vec3(x, y, 0), vec4(1, 1, 1, 0.1f)));
+                });
+                for (auto b : body_system) {
+                    vec3 pos = b->pos;
+                    pos.z = 0;
+                    line_vertexes.push_back(LineVertex(pos, vec4(1, 1, 1, 0.2f)));
+                    line_vertexes.push_back(LineVertex(b->pos, vec4(1, 1, 1, 0.2f)));
+                }
+                if (line_vertexes.size() > max_line_vertexes)
+                    line_vertexes.resize(max_line_vertexes);
             }
-            if (line_vertexes.size() > max_line_vertexes)
-                line_vertexes.resize(max_line_vertexes);
+
+            if (hovered_entity) {
+                Body *b = hovered_entity->get_component<Body>();
+
+                vec3 p0 = b->pos - camera_right*b->radius;
+                vec3 p1 = b->pos - camera_up*b->radius;
+                vec3 p2 = b->pos + camera_right*b->radius;
+                vec3 p3 = b->pos + camera_up*b->radius;
+
+                vec4 c(1, 1, 1, 0.5f);
+
+                line_vertexes.push_back(LineVertex(p0, c));
+                line_vertexes.push_back(LineVertex(p1, c));
+
+                line_vertexes.push_back(LineVertex(p1, c));
+                line_vertexes.push_back(LineVertex(p2, c));
+
+                line_vertexes.push_back(LineVertex(p2, c));
+                line_vertexes.push_back(LineVertex(p3, c));
+
+                line_vertexes.push_back(LineVertex(p3, c));
+                line_vertexes.push_back(LineVertex(p0, c));
+            }
 
             line_buf->bind();
             line_buf->write(0, sizeof(line_vertexes[0])*line_vertexes.size(), &line_vertexes[0]);
             line_buf->unbind();
             line_mesh->set_num_vertexes(line_vertexes.size());
+            line_vertexes.clear();
 
             auto cmd = renderqueue.add_command(line_program, line_mesh);
             cmd->indexed = false;
@@ -891,7 +1035,7 @@ int main(int argc, char *argv[]) {
             motion += camera_forward;
         if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S] || (my == mode.h - 1 && !rotating))
             motion -= camera_forward;
-        if (glm::length(motion) > 0) {
+        if (glm::length(motion) > 0 && !selected_entity) {
             motion = glm::normalize(motion);
             camera_focus += motion * sqrtf(camera_dist) * 0.2f;
         }
@@ -900,6 +1044,8 @@ int main(int argc, char *argv[]) {
         while (SDL_PollEvent(&event)) {
             switch (event.type) {
             case SDL_KEYDOWN:
+                if (event.key.keysym.sym == SDLK_f)
+                    add_asteroid(&entity_manager, cursor_pos);
                 break;
             case SDL_KEYUP:
                 if (event.key.keysym.sym == SDLK_ESCAPE)
@@ -937,6 +1083,8 @@ int main(int argc, char *argv[]) {
             case SDL_MOUSEBUTTONDOWN:
                 if (event.button.button == SDL_BUTTON_LEFT) {
                     do_spawn_boid(&entity_manager, cursor_pos);
+                } else if (event.button.button == SDL_BUTTON_MIDDLE) {
+                    selected_entity = hovered_entity;
                 } else if (event.button.button == SDL_BUTTON_RIGHT) {
                     if (!rotating) {
                         rotating = true;
@@ -964,13 +1112,16 @@ int main(int argc, char *argv[]) {
     asteroid_mesh = 0;
 
     if (music) {
-        Mix_HaltMusic();
+        printf("Freeing music...\n");
         Mix_FreeMusic(music);
     }
+    printf("Closing audio...\n");
     Mix_CloseAudio();
-
+    printf("Deleting OpenGL context...\n");
     SDL_GL_DeleteContext(glcontext);
+    printf("Destroying window...\n");
     SDL_DestroyWindow(window);
+    printf("Shutting down SDL...\n");
     SDL_Quit();
     printf("Done.\n");
     return 0;

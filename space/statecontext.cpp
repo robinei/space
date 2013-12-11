@@ -77,7 +77,8 @@ static void init_enabled_indexes() {
 
 static unsigned int enabled_index(GLenum x) {
     EnumIndex val = enabled_indexes.lookup(x);
-    assert(val != EnumIndex());
+    assert(val.first == x);
+    assert(enabled_values[val.second] == x);
     return val.second;
 }
 
@@ -137,7 +138,7 @@ StateContext::~StateContext() {
 void StateContext::enable(GLenum cap, bool value) {
     int i = enabled_index(cap);
     uint64_t flag = 1LL << i;
-    if (((state.enabled & flag) != 0) != (value != 0)) {
+    if (((state.enabled & flag) != 0) != value) {
         if (value) {
             glEnable(cap);
             state.enabled |= flag;
