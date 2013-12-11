@@ -90,6 +90,9 @@
     <ClCompile Include="program.cpp" />
     <ClCompile Include="quadtree.cpp" />
     <ClCompile Include="renderqueue.cpp" />
+    <ClCompile Include="RVO3D\Agent.cpp" />
+    <ClCompile Include="RVO3D\KdTree.cpp" />
+    <ClCompile Include="RVO3D\RVOSimulator.cpp" />
     <ClCompile Include="statecontext.cpp" />
     <ClCompile Include="stb_image.c" />
     <ClCompile Include="texture.cpp" />
@@ -112,6 +115,13 @@
     <ClInclude Include="quadtree.h" />
     <ClInclude Include="refcounted.h" />
     <ClInclude Include="renderqueue.h" />
+    <ClInclude Include="RVO3D\Agent.h" />
+    <ClInclude Include="RVO3D\API.h" />
+    <ClInclude Include="RVO3D\Definitions.h" />
+    <ClInclude Include="RVO3D\KdTree.h" />
+    <ClInclude Include="RVO3D\RVO.h" />
+    <ClInclude Include="RVO3D\RVOSimulator.h" />
+    <ClInclude Include="RVO3D\Vector3.h" />
     <ClInclude Include="skybox.h" />
     <ClInclude Include="statecontext.h" />
     <ClInclude Include="texture.h" />

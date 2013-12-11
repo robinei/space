@@ -10,6 +10,9 @@
     <Filter Include="render">
       <UniqueIdentifier>{50ddebc0-ba2e-4581-aaea-afa6229e94f3}</UniqueIdentifier>
     </Filter>
+    <Filter Include="RVO3D">
+      <UniqueIdentifier>{02ec6588-8fd6-48a7-91d4-1a18e661f2b5}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="mesh.cpp">
@@ -44,6 +47,15 @@
     </ClCompile>
     <ClCompile Include="statecontext.cpp">
       <Filter>render</Filter>
+    </ClCompile>
+    <ClCompile Include="RVO3D\Agent.cpp">
+      <Filter>RVO3D</Filter>
+    </ClCompile>
+    <ClCompile Include="RVO3D\KdTree.cpp">
+      <Filter>RVO3D</Filter>
+    </ClCompile>
+    <ClCompile Include="RVO3D\RVOSimulator.cpp">
+      <Filter>RVO3D</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -109,6 +121,27 @@
     </ClInclude>
     <ClInclude Include="skybox.h">
       <Filter>game</Filter>
+    </ClInclude>
+    <ClInclude Include="RVO3D\Agent.h">
+      <Filter>RVO3D</Filter>
+    </ClInclude>
+    <ClInclude Include="RVO3D\API.h">
+      <Filter>RVO3D</Filter>
+    </ClInclude>
+    <ClInclude Include="RVO3D\KdTree.h">
+      <Filter>RVO3D</Filter>
+    </ClInclude>
+    <ClInclude Include="RVO3D\RVO.h">
+      <Filter>RVO3D</Filter>
+    </ClInclude>
+    <ClInclude Include="RVO3D\RVOSimulator.h">
+      <Filter>RVO3D</Filter>
+    </ClInclude>
+    <ClInclude Include="RVO3D\Vector3.h">
+      <Filter>RVO3D</Filter>
+    </ClInclude>
+    <ClInclude Include="RVO3D\Definitions.h">
+      <Filter>RVO3D</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

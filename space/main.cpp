@@ -30,6 +30,8 @@
 #include "ecos.h"
 #include "skybox.h"
 
+#include "RVO3D/RVO.h"
+
 #define STBI_HEADER_FILE_ONLY
 #include "stb_image.c"
 
@@ -133,9 +135,10 @@ struct Body :
 {
     vec3 pos;
     vec3 vel;
-    vec3 move;
     float radius;
     Entity *entity;
+
+    size_t rvo_agent;
 
     void qtree_position(float &x, float &y) override {
         x = pos.x;
@@ -150,15 +153,11 @@ public:
     BodySystem() : quad_tree(-1000, -1000, 1000, 1000, 8) {}
 
     QuadTree quad_tree;
+    RVO::RVOSimulator rvo_sim;
 
     void update(float dt);
 };
 
-void Body::init(EntityManager *m, Entity *e) {
-    BodySystem *sys = m->get_system<BodySystem>();
-    sys->quad_tree.insert(this);
-    entity = e;
-}
 
 
 
@@ -403,21 +402,6 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
         }
         return limit(desired, maxforce);
     }
-
-    mat4 calc_rotation_matrix() {
-        vec3 up(0, 0, 1);
-        vec3 forward(glm::normalize(dir));
-        vec3 right(glm::cross(forward, up));
-        up = glm::cross(right, forward);
-        right = glm::normalize(glm::cross(forward, up));
-        up = glm::normalize(glm::cross(right, forward));
-
-        mat4 m;
-        m[0] = vec4(right, 0);
-        m[1] = vec4(forward, 0);
-        m[2] = vec4(up, 0);
-        return m;
-    }
 };
 
 class ShipSystem : public PoolSystem<Ship, 'SHIP'> {
@@ -485,36 +469,57 @@ class DoodadSystem : public PoolSystem<Doodad, 'DOOD'> {
 */
 
 
+static RVO::Vector3 to_rvo(vec3 v) {
+    return RVO::Vector3(v.x, v.y, v.z);
+}
 
+static vec3 from_rvo(RVO::Vector3 v) {
+    return vec3(v.x(), v.y(), v.z());
+}
+
+static mat4 calc_rotation_matrix(vec3 dir) {
+    vec3 up(0, 0, 1);
+    vec3 forward(glm::normalize(dir));
+    vec3 right(glm::cross(forward, up));
+    up = glm::cross(right, forward);
+    right = glm::normalize(glm::cross(forward, up));
+    up = glm::normalize(glm::cross(right, forward));
+
+    mat4 m;
+    m[0] = vec4(right, 0);
+    m[1] = vec4(forward, 0);
+    m[2] = vec4(up, 0);
+    return m;
+}
+
+void Body::init(EntityManager *m, Entity *e) {
+    BodySystem *sys = m->get_system<BodySystem>();
+    sys->quad_tree.insert(this);
+    entity = e;
+
+    float max_vel = 0;
+    Ship *s = entity->get_component<Ship>();
+    if (s) {
+        max_vel = s->maxspeed;
+    }
+    RVO::Vector3 rvo_pos = to_rvo(pos);
+    rvo_agent = sys->rvo_sim.addAgent(rvo_pos, 50.0f, 8, 5.0f, radius, max_vel);
+}
 
 void BodySystem::update(float dt) {
-    /*for (Body *b : *this) {
-        Entity *e = b->entity;
-        Ship *s = e->get_component<Ship>();
-        if (!s)
-            continue;
+    rvo_sim.setTimeStep(dt);
+    rvo_sim.doStep();
 
-        for (int i = 0; i < Ship::MAX_CLOSEST; ++i) {
-            Entity *e2 = s->closest[i];
-            if (!e2)
-                continue;
-            Body *b2 = e2->get_component<Body>();
-            if (!b2)
-                continue;
-
-            vec3 d = b2->pos - b->pos;
-            float radius = b->radius + b2->radius;
-            if (d.x*d.x + d.y*d.y > radius*radius)
-                continue;
-
-            puts("collision");
-            Plane plane(glm::normalize(d));
-            b->move = plane.project(b->move);
-            //b2->move = plane.project(b2->move);
-        }
-    }*/
     for (Body *b : *this) {
-        b->pos += b->move;
+        rvo_sim.setAgentPrefVelocity(b->rvo_agent, to_rvo(b->vel));
+        b->pos = from_rvo(rvo_sim.getAgentPosition(b->rvo_agent));
+        b->qtree_update();
+
+        Ship *s = b->entity->get_component<Ship>();
+        SimpleRenderable *r = b->entity->get_component<SimpleRenderable>();
+        if (r && s) {
+            r->model_matrix = glm::translate(b->pos) * calc_rotation_matrix(s->dir);
+        }
     }
 }
 
@@ -572,9 +577,9 @@ void Ship::update(EntityManager *m, float dt) {
 
     vec3 acc(0, 0, 0);
 
-    acc = obstacle_avoid();
+    //acc = obstacle_avoid();
 
-    if (acc == vec3(0, 0, 0)) {
+    //if (acc == vec3(0, 0, 0)) {
         acc += separation() * 1.5f;
         acc += alignment() * 1.0f;
         acc += cohesion() * 1.0f;
@@ -583,27 +588,16 @@ void Ship::update(EntityManager *m, float dt) {
         //acc += zseparation() * 1.5f;
 
         acc += arrive(cursor_pos) * 1.0f;
-    }
+    //}
 
     body->vel += acc * dt;
     body->vel = limit(body->vel, maxspeed);
-
-    body->move = body->vel * dt;
-    //pos.z = 0;
-
-    body->qtree_update();
 
     vec3 v = glm::normalize(body->vel);
     float a = glm::angle(dir, v);
     if (fabsf(a) > 0.001f) {
         vec3 axis(glm::cross(dir, v));
         dir = glm::normalize(dir * glm::angleAxis(glm::min(45.0f * dt, a), axis));
-    }
-
-
-    SimpleRenderable *r = entity->get_component<SimpleRenderable>();
-    if (r) {
-        r->model_matrix = glm::translate(body->pos) * calc_rotation_matrix();
     }
 }
 
