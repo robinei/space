@@ -297,11 +297,18 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
 
             float t = 0.0f;
             if (sweep(body, b, t_horizon, t)) {
-                vec3 p = body->pos + body->vel*best_t*t_horizon;
-                sum += glm::cross(p - body->pos, p - b->pos);
+                vec3 p0 = body->pos + body->vel*t*t_horizon;
+                vec3 p1 = b->pos + b->vel*t*t_horizon;
+                sum += glm::normalize(p0 - p1) * (1.0f - t);
 
                 line_vertexes.push_back(LineVertex(body->pos, vec4(0, 1, 0, 0.9f)));
                 line_vertexes.push_back(LineVertex(b->pos, vec4(0, 1, 0, 0.1f)));
+
+                line_vertexes.push_back(LineVertex(body->pos, vec4(0, 0, 1, 1)));
+                line_vertexes.push_back(LineVertex(p0, vec4(0, 0, 1, 1)));
+
+                line_vertexes.push_back(LineVertex(b->pos, vec4(1, 0, 0, 1)));
+                line_vertexes.push_back(LineVertex(p1, vec4(1, 0, 0, 1)));
 
                 if (t < best_t) {
                     best_t = t;
@@ -313,14 +320,8 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
         if (!best_b)
             return vec3(0, 0, 0);
 
-        line_vertexes.push_back(LineVertex(body->pos, vec4(0, 0, 1, 1)));
-        line_vertexes.push_back(LineVertex(body->pos + body->vel*best_t*t_horizon, vec4(0, 0, 1, 1)));
-
-        line_vertexes.push_back(LineVertex(best_b->pos, vec4(1, 0, 0, 1)));
-        line_vertexes.push_back(LineVertex(best_b->pos + best_b->vel*best_t*t_horizon, vec4(1, 0, 0, 1)));
-
-        vec3 v = steer(glm::cross(body->vel, body->pos - best_b->pos));
-        v = steer(sum);
+        //vec3 v = steer(glm::cross(body->vel, body->pos - best_b->pos));
+        vec3 v = steer(sum);
 
         line_vertexes.push_back(LineVertex(body->pos, vec4(1, 1, 1, 0.8f)));
         line_vertexes.push_back(LineVertex(body->pos + v*3.0f, vec4(1, 1, 1, 0.8f)));
