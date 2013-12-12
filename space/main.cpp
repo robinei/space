@@ -31,6 +31,7 @@
 #include "skybox.h"
 
 #include "RVO3D/RVO.h"
+#include "btBulletCollisionCommon.h"
 
 #define STBI_HEADER_FILE_ONLY
 #include "stb_image.c"
@@ -135,6 +136,7 @@ struct Body :
 {
     vec3 pos;
     vec3 vel;
+    vec3 desired_vel;
     float radius;
     Entity *entity;
 
@@ -389,7 +391,7 @@ struct Ship : public PoolComponent<Ship, 'SHIP', class ShipSystem> {
     }
 
     vec3 arrive(vec3 target) {
-        float brakelimit = 10.0f;
+        float brakelimit = 50.0f;
         vec3 desired = target - body->pos;
         float len = glm::length(desired);
         if (len < 0.000001f)
@@ -503,7 +505,7 @@ void Body::init(EntityManager *m, Entity *e) {
         max_vel = s->maxspeed;
     }
     RVO::Vector3 rvo_pos = to_rvo(pos);
-    rvo_agent = sys->rvo_sim.addAgent(rvo_pos, 50.0f, 8, 5.0f, radius, max_vel);
+    rvo_agent = sys->rvo_sim.addAgent(rvo_pos, 50.0f, 16, 10.0f, radius, max_vel);
 }
 
 void BodySystem::update(float dt) {
@@ -511,8 +513,9 @@ void BodySystem::update(float dt) {
     rvo_sim.doStep();
 
     for (Body *b : *this) {
-        rvo_sim.setAgentPrefVelocity(b->rvo_agent, to_rvo(b->vel));
+        rvo_sim.setAgentPrefVelocity(b->rvo_agent, to_rvo(b->desired_vel));
         b->pos = from_rvo(rvo_sim.getAgentPosition(b->rvo_agent));
+        b->vel = from_rvo(rvo_sim.getAgentVelocity(b->rvo_agent));
         b->qtree_update();
 
         Ship *s = b->entity->get_component<Ship>();
@@ -580,18 +583,18 @@ void Ship::update(EntityManager *m, float dt) {
     //acc = obstacle_avoid();
 
     //if (acc == vec3(0, 0, 0)) {
-        acc += separation() * 1.5f;
-        acc += alignment() * 1.0f;
-        acc += cohesion() * 1.0f;
+    acc += separation() * 1.5f;
+    acc += alignment() * 1.0f;
+    acc += cohesion() * 1.0f;
 
-        acc += planehug() * 1.5f;
-        //acc += zseparation() * 1.5f;
+    acc += planehug() * 1.5f;
+    //acc += zseparation() * 1.5f;
 
-        acc += arrive(cursor_pos) * 1.0f;
+    acc += arrive(cursor_pos) * 1.5f;
     //}
 
-    body->vel += acc * dt;
-    body->vel = limit(body->vel, maxspeed);
+    body->desired_vel += acc * dt;
+    body->desired_vel = limit(body->desired_vel, maxspeed);
 
     vec3 v = glm::normalize(body->vel);
     float a = glm::angle(dir, v);
@@ -613,12 +616,11 @@ static void do_spawn_boid(EntityManager *m, vec3 pos) {
     
     Body *b = m->add_component<Body>(e);
     b->pos = pos;
-    b->vel = vec3(glm::diskRand(10.0f), 0.0f);
-    b->radius = ship_mesh->radius();
+    b->radius = ship_mesh->radius() * .5f;
 
     Ship *s = m->add_component<Ship>(e);
-    s->dir = glm::normalize(b->vel);
-    s->maxspeed = glm::linearRand(30.0f, 60.0f);
+    s->dir = glm::normalize(vec3(glm::diskRand(10.0f), 0.0f));
+    s->maxspeed = glm::linearRand(10.0f, 30.0f);
     s->maxforce = glm::linearRand(0.5f, 2.0f);
     s->team = rand() % 2;
     
@@ -725,7 +727,7 @@ int main(int argc, char *argv[]) {
 #endif
     printf("Starting...\n");
 
-    if (SDL_Init(SDL_INIT_EVERYTHING) < 0)
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0)
         die("SDL_Init() error: %s", SDL_GetError());
 
     bool ok = true;
@@ -833,7 +835,6 @@ int main(int argc, char *argv[]) {
 
     //SDL_SetRelativeMouseMode(SDL_TRUE);
 
-
     BodySystem body_system;
     ShipSystem ship_system;
     SimpleRenderableSystem simple_renderable_system;
@@ -843,8 +844,8 @@ int main(int argc, char *argv[]) {
     entity_manager.add_system(&simple_renderable_system);
     entity_manager.optimize_systems();
 
-    for (int i = 0; i < 100; ++i) {
-        do_spawn_boid(&entity_manager, vec3(glm::diskRand(200.0f), 0.0f));
+    for (int i = 0; i < 40; ++i) {
+        do_spawn_boid(&entity_manager, vec3(glm::diskRand(100.0f), 0.0f));
     }
     for (int i = 0; i < 10; ++i) {
         add_asteroid(&entity_manager, vec3(glm::diskRand(400.0f), 0.0f));

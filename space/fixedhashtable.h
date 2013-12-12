@@ -6,7 +6,7 @@ class FixedHashTable {
 private:
     enum {
         HighBits = BucketsBits,
-        LowBits = 32 - HighBits,
+        LowBits = sizeof(unsigned int)*8 - HighBits,
         NumBuckets = 1 << HighBits
     };
 
