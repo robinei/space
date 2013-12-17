@@ -1,4 +1,4 @@
-#version 150 core
+#version 140
 
 uniform vec4 mat_ambient;
 uniform vec4 mat_diffuse;

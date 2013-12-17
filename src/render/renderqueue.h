@@ -30,6 +30,7 @@ struct UniformBindingImpl : public UniformBinding {
     }
 };
 
+class RenderQueue;
 
 class RenderCommand {
 public:
@@ -47,11 +48,7 @@ public:
     }
 
     template <typename T>
-    void add_uniform(GLint location, const T &value) {
-        UniformBinding *binding = renderqueue->arena.alloc<UniformBindingImpl<T>>(location, value);
-        binding->next = uniforms;
-        uniforms = binding;
-    }
+    void add_uniform(GLint location, const T &value);
 
 private:
     friend class Arena;
@@ -96,6 +93,15 @@ private:
     Arena arena;
     std::vector<RenderCommand *> commands;
 };
+
+
+
+template <typename T>
+void RenderCommand::add_uniform(GLint location, const T &value) {
+    UniformBinding *binding = renderqueue->arena.alloc<UniformBindingImpl<T>>(location, value);
+    binding->next = uniforms;
+    uniforms = binding;
+}
 
 
 #endif

@@ -5,7 +5,7 @@
 #include <string>
 
 #include <GL/glew.h>
-#include <SDL_opengl.h>
+#include "SDL2/SDL_opengl.h"
 #include "util/mymath.h"
 
 class OpenGLException : public std::exception {

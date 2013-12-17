@@ -7,8 +7,8 @@
 #include <cstdint>
 #include <algorithm>
 
-#include "SDL.h"
-#include "SDL_mixer.h"
+#include "SDL2/SDL.h"
+#include "SDL2/SDL_mixer.h"
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/random.hpp>
@@ -47,7 +47,7 @@
 #define die(fmt, ...) \
 do { \
     \
-    printf(fmt "\n", __VA_ARGS__); \
+    printf(fmt "\n", ##__VA_ARGS__); \
     exit(1); \
 } while (0)
 
@@ -738,7 +738,7 @@ int main(int argc, char *argv[]) {
 
     bool ok = true;
     ok = ok && SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3) == 0;
-    ok = ok && SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2) == 0;
+    ok = ok && SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1) == 0;
     ok = ok && SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE) == 0;
     ok = ok && SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1) == 0;
     ok = ok && SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8) == 0;
@@ -777,7 +777,7 @@ int main(int argc, char *argv[]) {
     if (status != GLEW_OK)
         die("glewInit() error: %s", glewGetErrorString(status));
 
-    if (!GLEW_VERSION_3_2)
+    if (!GLEW_VERSION_3_1)
         die("OpenGL 3.2 API is not available.");
 
 

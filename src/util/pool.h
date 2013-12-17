@@ -3,6 +3,8 @@
 
 #include <vector>
 #include <cassert>
+#include <malloc.h>
+#include <cstring>
 
 template <class T>
 class Pool {

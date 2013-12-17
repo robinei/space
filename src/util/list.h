@@ -1,6 +1,7 @@
 #ifndef INTRUSIVE_H
 #define INTRUSIVE_H
 
+#include <cstdint>
 #include "listlink.h"
 
 template <class T, ListLink T::*LinkField>
@@ -8,10 +9,10 @@ class List {
 	ListLink head;
 
 	static T *value_of(ListLink *link) {
-		return (T *)((char *)link - (int)&(((T *)0)->*LinkField));
+		return (T *)((char *)link - (intptr_t)&(((T *)0)->*LinkField));
 	}
 	static const T *value_of(const ListLink *link) {
-		return (const T *)((const char *)link - (int)&(((T *)0)->*LinkField));
+		return (const T *)((const char *)link - (intptr_t)&(((T *)0)->*LinkField));
 	}
 
 public:
@@ -58,7 +59,7 @@ private:                                                            \
 	friend List;                                                    \
 	Const ListLink *link;                                           \
 public:                                                             \
-	typedef value_type value_type;                                  \
+	typedef List::value_type value_type;                            \
 	                                                                \
 	Iter() : link(0) {}                                             \
 	Iter(Const ListLink *link) : link(link) {}                      \
