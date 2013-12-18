@@ -59,7 +59,7 @@ private:                                                            \
 	friend List;                                                    \
 	Const ListLink *link;                                           \
 public:                                                             \
-	typedef List::value_type value_type;                            \
+	typedef typename List::value_type value_type;                   \
 	                                                                \
 	Iter() : link(0) {}                                             \
 	Iter(Const ListLink *link) : link(link) {}                      \
