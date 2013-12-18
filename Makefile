@@ -29,7 +29,7 @@ LDFLAGS= -lrt -lpthread -ldl \
 
 
 OBJECTS=$(C_SOURCES:.c=.o) $(CXX_SOURCES:.cpp=.o)
-EXECUTABLE=bin/space
+EXECUTABLE=space
 
 all: $(C_SOURCES) $(CXX_SOURCES) $(EXECUTABLE)
 

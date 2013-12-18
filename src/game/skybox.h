@@ -10,15 +10,15 @@ class SkyBox {
 public:
     SkyBox(const char *paths[6]) {
         program = Program::create();
-        program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/skybox.vert"));
-        program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/skybox.frag"));
+        program->attach(Shader::load(GL_VERTEX_SHADER, "data/shaders/skybox.vert"));
+        program->attach(Shader::load(GL_FRAGMENT_SHADER, "data/shaders/skybox.frag"));
         program->attrib("in_pos", 0);
         program->link();
         program->detach_all();
 
         texture = Texture::create_cubemap(paths);
 
-        mesh = Mesh::load("../data/meshes/sphere.ply", false);
+        mesh = Mesh::load("data/meshes/sphere.ply", false);
     }
 
     void render(mat4 view_matrix, mat4 projection_matrix) {

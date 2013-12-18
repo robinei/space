@@ -791,7 +791,7 @@ int main(int argc, char *argv[]) {
     if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) < 0) {
         die("Mix_OpenAudio() error: %s", Mix_GetError());
     }
-    Mix_Music *music = Mix_LoadMUS("../data/music/test.ogg");
+    Mix_Music *music = Mix_LoadMUS("data/music/test.ogg");
     if (!music) {
         printf("Mix_LoadMUS() error: %s\n", Mix_GetError());
     } else {
@@ -803,23 +803,23 @@ int main(int argc, char *argv[]) {
     context.enable(GL_MULTISAMPLE);
 
     try {
-        ship_mesh = Mesh::load("../data/meshes/harv.ply");
-        asteroid_mesh = Mesh::load("../data/meshes/asteroid.ply");
+        ship_mesh = Mesh::load("data/meshes/harv.ply");
+        asteroid_mesh = Mesh::load("data/meshes/asteroid.ply");
     } catch (const std::exception &e) {
         die("error: %s", e.what());
     }
 
     ship_program = Program::create();
-    ship_program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/simple.vert"));
-    ship_program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/simple.frag"));
+    ship_program->attach(Shader::load(GL_VERTEX_SHADER, "data/shaders/simple.vert"));
+    ship_program->attach(Shader::load(GL_FRAGMENT_SHADER, "data/shaders/simple.frag"));
     ship_program->attrib("in_pos", 0);
     ship_program->attrib("in_normal", 1);
     ship_program->link();
     ship_program->detach_all();
 
     Program::Ref line_program = Program::create();
-    line_program->attach(Shader::load(GL_VERTEX_SHADER, "../data/shaders/color.vert"));
-    line_program->attach(Shader::load(GL_FRAGMENT_SHADER, "../data/shaders/color.frag"));
+    line_program->attach(Shader::load(GL_VERTEX_SHADER, "data/shaders/color.vert"));
+    line_program->attach(Shader::load(GL_FRAGMENT_SHADER, "data/shaders/color.frag"));
     line_program->attrib("in_pos", 0);
     line_program->attrib("in_color", 1);
     line_program->link();
@@ -871,12 +871,12 @@ int main(int argc, char *argv[]) {
     bool rotating = false;
 
     const char *paths[6] {
-        "../data/skyboxes/default_right1.jpg",
-        "../data/skyboxes/default_left2.jpg",
-        "../data/skyboxes/default_top3.jpg",
-        "../data/skyboxes/default_bottom4.jpg",
-        "../data/skyboxes/default_front5.jpg",
-        "../data/skyboxes/default_back6.jpg"
+        "data/skyboxes/default_right1.jpg",
+        "data/skyboxes/default_left2.jpg",
+        "data/skyboxes/default_top3.jpg",
+        "data/skyboxes/default_bottom4.jpg",
+        "data/skyboxes/default_front5.jpg",
+        "data/skyboxes/default_back6.jpg"
     };
     SkyBox skybox(paths);
 

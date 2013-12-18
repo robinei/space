@@ -41,13 +41,13 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>$(SolutionDir)\..\src\deps;$(SolutionDir)\..\src;$(SolutionDir)\..\winlibs\include;$(SolutionDir)\..\..\boost;$(IncludePath)</IncludePath>
-    <LibraryPath>$(SolutionDir)\..\winlibs\lib;$(SolutionDir)\..\..\boost\stage\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(SolutionDir)\..\src\deps;$(SolutionDir)\..\src;$(SolutionDir)\libs\include;$(SolutionDir)\..\..\boost;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)\libs\lib;$(SolutionDir)\..\..\boost\stage\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
-    <IncludePath>$(SolutionDir)\..\src\deps;$(SolutionDir)\..\src;$(SolutionDir)\..\winlibs\include;$(SolutionDir)\..\..\boost;$(IncludePath)</IncludePath>
-    <LibraryPath>$(SolutionDir)\..\winlibs\lib;$(SolutionDir)\..\..\boost\stage\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(SolutionDir)\..\src\deps;$(SolutionDir)\..\src;$(SolutionDir)\libs\include;$(SolutionDir)\..\..\boost;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)\libs\lib;$(SolutionDir)\..\..\boost\stage\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -64,7 +64,7 @@
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
     <PostBuildEvent>
-      <Command>copy $(TargetPath) $(SolutionDir)\..\bin\$(TargetName)$(TargetExt)</Command>
+      <Command>copy $(TargetPath) $(SolutionDir)\..\$(TargetName)$(TargetExt)</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -86,7 +86,7 @@
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
     <PostBuildEvent>
-      <Command>copy $(TargetPath) $(SolutionDir)\..\bin\$(TargetName)$(TargetExt)</Command>
+      <Command>copy $(TargetPath) $(SolutionDir)\..\$(TargetName)$(TargetExt)</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
