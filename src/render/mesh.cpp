@@ -193,9 +193,10 @@ void Mesh::unbind() {
 }
 
 void Mesh::render(int offset, int count) {
-    assert(_num_vertexes > 0);
     if (!count)
         count = _num_vertexes;
+    if (count <= 0)
+        return;
     assert(offset + count <= _num_vertexes);
     glDrawArrays(_mode, offset, count);
 }
