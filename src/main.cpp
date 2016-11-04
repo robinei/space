@@ -44,12 +44,12 @@
 #include <Windows.h>
 #endif
 
-#define die(fmt, ...) \
-do { \
-    \
-    printf(fmt "\n", ##__VA_ARGS__); \
-    exit(1); \
-} while (0)
+#define die(fmt, ...)                           \
+    do {                                        \
+                                                \
+        printf(fmt "\n", ##__VA_ARGS__);        \
+        exit(1);                                \
+    } while (0)
 
 
 
@@ -514,13 +514,13 @@ void Body::init(EntityManager *m, Entity *e) {
 void BodySystem::update(float dt) {
     rvo_sim.setTimeStep(dt);
     rvo_sim.doStep();
-
+    
     for (Body *b : *this) {
         rvo_sim.setAgentPrefVelocity(b->rvo_agent, to_rvo(b->desired_vel));
         b->pos = from_rvo(rvo_sim.getAgentPosition(b->rvo_agent));
         b->vel = from_rvo(rvo_sim.getAgentVelocity(b->rvo_agent));
         b->qtree_update();
-
+        
         Ship *s = b->entity->get_component<Ship>();
         SimpleRenderable *r = b->entity->get_component<SimpleRenderable>();
         if (r && s) {
