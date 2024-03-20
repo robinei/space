@@ -1,3 +1,6 @@
+
+#include "game/rvo.h"
+
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
@@ -33,7 +36,6 @@
 #include "game/ecos.h"
 #include "game/skybox.h"
 
-#include "RVO3D/RVO.h"
 #include "btBulletCollisionCommon.h"
 
 #define STBI_HEADER_FILE_ONLY
@@ -139,11 +141,11 @@ struct Body :
 {
     vec3 pos;
     vec3 vel;
-    vec3 desired_vel;
     float radius;
     Entity *entity;
 
-    size_t rvo_agent;
+    RVO::Agent *rvo_agent;
+    std::vector<std::pair<float, const RVO::Agent *> > agentNeighbors;
 
     void qtree_position(float &x, float &y) override {
         x = pos.x;
@@ -151,6 +153,31 @@ struct Body :
     }
 
     void init(EntityManager *m, Entity *e) override;
+
+    void insertAgentNeighbor(const RVO::Agent *agent, size_t maxNeighbors, float &rangeSq) {
+        if (this->rvo_agent != agent) {
+            const float distSq = absSq(rvo_agent->position - agent->position);
+
+            if (distSq < rangeSq) {
+                if (agentNeighbors.size() < maxNeighbors) {
+                    agentNeighbors.push_back(std::make_pair(distSq, agent));
+                }
+
+                size_t i = agentNeighbors.size() - 1;
+
+                while (i != 0 && distSq < agentNeighbors[i - 1].first) {
+                    agentNeighbors[i] = agentNeighbors[i - 1];
+                    --i;
+                }
+
+                agentNeighbors[i] = std::make_pair(distSq, agent);
+
+                if (agentNeighbors.size() == maxNeighbors) {
+                    rangeSq = agentNeighbors.back().first;
+                }
+            }
+        }
+    }
 };
 
 class BodySystem : public PoolSystem<Body, 'BODY'> {
@@ -158,7 +185,7 @@ public:
     BodySystem() : quad_tree(-1000, -1000, 1000, 1000, 8) {}
 
     QuadTree quad_tree;
-    RVO::RVOSimulator rvo_sim;
+    std::vector<const RVO::Agent *> agentNeighbors;
 
     void update(float dt);
 };
@@ -479,7 +506,7 @@ static RVO::Vector3 to_rvo(vec3 v) {
 }
 
 static vec3 from_rvo(RVO::Vector3 v) {
-    return vec3(v.x(), v.y(), v.z());
+    return vec3(v.x, v.y, v.z);
 }
 
 static mat4 calc_rotation_matrix(vec3 dir) {
@@ -502,23 +529,14 @@ void Body::init(EntityManager *m, Entity *e) {
     sys->quad_tree.insert(this);
     entity = e;
 
-    float max_vel = 0;
-    Ship *s = entity->get_component<Ship>();
-    if (s) {
-        max_vel = s->maxspeed;
-    }
-    RVO::Vector3 rvo_pos = to_rvo(pos);
-    rvo_agent = sys->rvo_sim.addAgent(rvo_pos, 50.0f, 16, 10.0f, radius, max_vel);
+    rvo_agent = new RVO::Agent;
+    rvo_agent->position = to_rvo(pos);
+    rvo_agent->radius = radius;
+    rvo_agent->velocity = RVO::Vector3();
 }
 
 void BodySystem::update(float dt) {
-    rvo_sim.setTimeStep(dt);
-    rvo_sim.doStep();
-    
     for (Body *b : *this) {
-        rvo_sim.setAgentPrefVelocity(b->rvo_agent, to_rvo(b->desired_vel));
-        b->pos = from_rvo(rvo_sim.getAgentPosition(b->rvo_agent));
-        b->vel = from_rvo(rvo_sim.getAgentVelocity(b->rvo_agent));
         b->qtree_update();
         
         Ship *s = b->entity->get_component<Ship>();
@@ -579,8 +597,6 @@ void Ship::update(EntityManager *m, float dt) {
     friend_radius = adjust_query_radius(friend_radius, num_friends, MAX_FRIENDS);
     closest_radius = adjust_query_radius(closest_radius, num_closest, MAX_CLOSEST);
 
-
-
     vec3 acc(0, 0, 0);
 
     //acc = obstacle_avoid();
@@ -596,8 +612,28 @@ void Ship::update(EntityManager *m, float dt) {
     acc += arrive(cursor_pos) * 1.5f;
     //}
 
-    body->desired_vel += acc * dt;
-    body->desired_vel = limit(body->desired_vel, maxspeed);
+    vec3 desired_vel = limit(body->vel + acc * dt, maxspeed);
+
+
+    body->agentNeighbors.clear();
+    float rvo_radius = 50.0;
+    float rvo_radius_sqr = rvo_radius * rvo_radius;
+    sys->quad_tree.query(p.x - rvo_radius, p.y - rvo_radius,
+                         p.x + rvo_radius, p.y + rvo_radius,
+                         [&](QuadTree::Object *obj) mutable
+    {
+        body->insertAgentNeighbor(static_cast<Body *>(obj)->rvo_agent, 16, rvo_radius_sqr);
+    });
+    sys->agentNeighbors.clear();
+    for (size_t i = 0; i < body->agentNeighbors.size(); ++i) {
+        sys->agentNeighbors.push_back(body->agentNeighbors[i].second);
+    }
+    RVO::Agent *agent = body->rvo_agent;
+    agent->velocity = agent->computeNewVelocity(dt, 10.0, to_rvo(desired_vel), maxspeed, &sys->agentNeighbors[0], sys->agentNeighbors.size());
+    agent->position += agent->velocity * dt;
+    body->pos = from_rvo(agent->position);
+    body->vel = from_rvo(agent->velocity);
+
 
     float len = glm::length(body->vel);
     if (len > 0) {
